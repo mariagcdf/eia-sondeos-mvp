@@ -1,0 +1,10 @@
+
+# Reglas simples por defecto
+hidrologia:
+  distancia_rio_m:
+    alto: 100     # <100 m => Alto
+    medio: 500    # 100–500 m => Medio
+biotico:
+  natura_intersecta:
+    verdadero: "Muy Alto"
+    falso: "Bajo"

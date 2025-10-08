@@ -1,0 +1,20 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+.env/
+
+# Archivos con claves o configuración privada
+*.env
+config.json
+apikey.txt
+secret_key.*
+credentials.*
+
+# Archivos compilados o temporales
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.DS_Store

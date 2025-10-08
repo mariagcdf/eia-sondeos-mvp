@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Rio Demo"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -6.75,
+            41.09
+          ],
+          [
+            -6.72,
+            41.09
+          ]
+        ]
+      }
+    }
+  ]
+}

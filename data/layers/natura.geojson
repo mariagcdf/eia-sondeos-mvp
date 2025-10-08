@@ -1,0 +1,38 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "site": "ZEPA Demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -6.742,
+              41.092
+            ],
+            [
+              -6.742,
+              41.1
+            ],
+            [
+              -6.735,
+              41.1
+            ],
+            [
+              -6.735,
+              41.092
+            ],
+            [
+              -6.742,
+              41.092
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

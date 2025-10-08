@@ -1,0 +1,7 @@
+
+geopandas
+shapely
+pyproj
+pandas
+jinja2
+fiona
