@@ -77,7 +77,8 @@ if not pdf:
 if pdf:
     with st.spinner("Procesando el PDF y extrayendo información…"):
         try:
-            datos_min, literal_blocks, html = extract_from_project_and_eia(
+            # 👇 AHORA DEVUELVE 4 VALORES
+            datos_min, literal_blocks, usadas, html = extract_from_project_and_eia(
                 pdf, eia_docx=None, model=modelo
             )
             st.success("✅ Extracción completada.")
@@ -87,6 +88,10 @@ if pdf:
             st.stop()
 
     st.success("Listo. Revisa, ajusta lo necesario y exporta tu EIA.")
+
+    # Muestra opcional de páginas usadas
+    if usadas:
+        st.markdown(f"<div class='small-note'>Páginas usadas para la vista IA: {', '.join(map(str, usadas))}</div>", unsafe_allow_html=True)
 
     # ================== Datos clave (previa) ==================
     st.subheader("1) Datos clave extraídos")

@@ -7,6 +7,7 @@ from typing import Tuple, List, Dict, Any, Optional
 from dotenv import load_dotenv
 import json
 import os
+import re
 
 # Ajusta estos imports a tu proyecto:
 from core import regex_extract, render_html
@@ -18,18 +19,15 @@ from core.extraccion.bloques_textuales import extraer_bloques_literal
 from core.export_docx_template import export_docx_from_placeholder_map
 
 from docx import Document
-import re
 
 load_dotenv(override=True)
-
 
 # ----------------------------
 # Utilidades locales
 # ----------------------------
-
 def _collect_placeholders_in_doc(doc: Document) -> Dict[str, int]:
     """Devuelve {placeholder: cuenta} encontrados en cuerpo, tablas, encabezados y pies."""
-    found = {}
+    found: Dict[str, int] = {}
 
     def harvest(txt: str):
         for m in re.finditer(r"\{\{([^{}]+)\}\}", txt or ""):
@@ -42,6 +40,7 @@ def _collect_placeholders_in_doc(doc: Document) -> Dict[str, int]:
         if "{{" in p.text:
             harvest("".join(r.text for r in p.runs) or p.text)
 
+    # tablas
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -82,21 +81,20 @@ def _table_from_coords(coords: Dict[str, Any]) -> str:
     huso = utm.get("huso", "—"); datum = utm.get("datum", "—")
     return f"UTM X: {x}\nUTM Y: {y}\nHuso: {huso}\nDatum: {datum}"
 
-
 # ----------------------------
 # 1) Extracción
 # ----------------------------
-
 def extract_from_project_and_eia(
     uploaded_file,
     eia_docx: Optional[str] = None,
-    model: str = "gpt-4.1-mini",   # <--- añadido para compatibilidad
+    model: str = "gpt-4.1-mini",   # compatibilidad
     max_pages: int = 40,
     max_chars: int = 15000
-) -> Tuple[Dict[str, Any], List[int], str]:
+) -> Tuple[Dict[str, Any], Dict[str, str], List[int], str]:
     """
     Devuelve:
       - datos_regex: dict con parámetros/localización/coordenadas (regex)
+      - literal_blocks: dict con bloques textuales largos listos para placeholders
       - usadas: páginas usadas (solo informativo)
       - html: vista previa (si tienes renderizador)
     """
@@ -109,6 +107,7 @@ def extract_from_project_and_eia(
 
     literal_blocks = extraer_bloques_literal(texto_completo)
     try:
+        # Reforzar PH_Consumo con extractor específico si procede
         literal_blocks.setdefault("PH_Consumo", regex_extract.extract_consumo_block(texto_completo) or "")
     except Exception:
         pass
@@ -118,14 +117,11 @@ def extract_from_project_and_eia(
     except Exception:
         html = "<p>Vista previa no disponible.</p>"
 
-
-    return datos_regex, usadas, html
-
+    return datos_regex, literal_blocks, usadas, html
 
 # ----------------------------
 # 2) Construcción del JSON de placeholders (antes de exportar)
 # ----------------------------
-
 def build_placeholder_json_for_template(
     plantilla_path: str,
     datos_min: Dict[str, Any],
@@ -153,11 +149,11 @@ def build_placeholder_json_for_template(
     def value_for(ph: str):
         if ph in lb and isinstance(lb[ph], (str, int, float)):
             return lb[ph]
-        if ph in (p or {}):
+        if ph in p:
             return p.get(ph, "")
-        if ph in (loc or {}):
+        if ph in loc:
             return loc.get(ph, "")
-        if ph in (datos_min or {}):
+        if ph in datos_min:
             return datos_min.get(ph, "")
         if ph == "tabla_coordenadas":
             return _table_from_coords(coords)
@@ -179,11 +175,9 @@ def build_placeholder_json_for_template(
 
     return placeholder_map
 
-
 # ----------------------------
 # 3) Exportador: usa el JSON ya construido
 # ----------------------------
-
 def export_eia_docx(
     datos_min: Dict[str, Any],
     literal_blocks: Dict[str, str],
@@ -201,7 +195,6 @@ def export_eia_docx(
         os.makedirs(out_dir, exist_ok=True)
         base_name = os.path.splitext(os.path.basename(out_path))[0]
         json_path = os.path.join(out_dir, f"{base_name}.placeholders.json")
-
 
     placeholder_map = build_placeholder_json_for_template(
         plantilla_path=plantilla_path,
