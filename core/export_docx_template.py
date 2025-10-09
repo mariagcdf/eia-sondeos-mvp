@@ -1,202 +1,198 @@
 # core/export_docx_template.py
 # Recibe un JSON (placeholder -> valor) y lo vuelca en el DOCX
-# con soporte de textos largos y estructura (párrafos, saltos, listas).
+# con soporte de textos largos, párrafos reales y listas.
 
-from typing import Dict, Any, List
+from typing import Dict, Any
+import re
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 # =========================
-# Utilidades internas
+# Utilidades de texto
 # =========================
 
-def _chunks(s: str, n: int = 3000):
-    for i in range(0, len(s), n):
-        yield s[i:i+n]
+def _norm_block_text(s: str) -> str:
+    """Normaliza un bloque de texto antes de volcarlo a DOCX."""
+    if s is None:
+        return ""
+    # Normalizar finales de línea
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # Quitar espacios a final de línea
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    # Compactar espacios múltiples
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    # Compactar saltos: como mucho dos seguidos
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+def _is_bullet_line(line: str) -> bool:
+    """Detecta una línea de lista con viñeta simple."""
+    return bool(re.match(r"^\s*(?:[-*•–])\s+\S", line))
+
+def _split_blocks_by_blanklines(text: str):
+    """Divide por párrafos a partir de líneas en blanco (doble salto)."""
+    # Bloques separados por líneas en blanco
+    return [b for b in re.split(r"\n\s*\n", text) if b.strip()]
+
+def _split_lines(text: str):
+    """Divide en líneas preservando saltos simples."""
+    return text.split("\n")
+
+# =========================
+# Bajo nivel: insertar párrafo tras otro (Oxml)
+# =========================
+
+def _insert_paragraph_after(paragraph: Paragraph) -> Paragraph:
+    """
+    Inserta y devuelve un párrafo justo después del dado (bajo nivel).
+    Preserva el mismo contenedor y permite aplicar estilos después.
+    """
+    p = paragraph._p
+    new_p = OxmlElement("w:p")
+    p.addnext(new_p)
+    return Paragraph(new_p, paragraph._parent)
+
+# =========================
+# Motor de escritura
+# =========================
 
 def _clear_paragraph(para: Paragraph):
-    # Borra el contenido manteniendo estilo y propiedades del párrafo
+    # Borra todos los runs del párrafo (contenido)
     for r in para.runs:
         r.text = ""
-    # Elimina los runs (deja el párrafo limpio)
+    # Elimina elementos de los runs para dejarlo vacío
     while para.runs:
         para.runs[0]._element.getparent().remove(para.runs[0]._element)
 
-def _add_paragraph_after(para: Paragraph, text: str = "", style: str = None) -> Paragraph:
+def _append_text_with_linebreaks(para: Paragraph, text: str):
     """
-    Inserta un párrafo justo después de 'para' (compatible con python-docx).
-    Devuelve el nuevo Paragraph.
+    Añade texto dentro de un mismo párrafo:
+    - '\n' -> salto de línea (w:br)
+    (NO crea nuevos párrafos)
     """
-    p = para._element
-    new_p = OxmlElement("w:p")
-    p.addnext(new_p)
-    new_para = Paragraph(new_p, para._parent)
-    if style:
-        try:
-            new_para.style = style
-        except Exception:
-            pass
-    if text:
-        for chunk in _chunks(text):
-            new_para.add_run(chunk)
-    return new_para
+    parts = text.split("\n")
+    for i, part in enumerate(parts):
+        if part:
+            para.add_run(part)
+        if i < len(parts) - 1:
+            br = para.add_run()
+            br.add_break()
 
-def _is_bullet_line(line: str) -> bool:
-    return line.strip().startswith("- ")
-
-def _is_numbered_line(line: str) -> bool:
-    s = line.strip()
-    # 1. texto  |  1) texto
-    return True if len(s) > 2 and (s[0].isdigit() and (s[1] in ".)")) else False
-
-def _strip_bullet_prefix(line: str) -> str:
-    return line.strip()[2:] if line.strip().startswith("- ") else line
-
-def _strip_number_prefix(line: str) -> str:
-    s = line.strip()
-    i = 0
-    while i < len(s) and s[i].isdigit():
-        i += 1
-    if i < len(s) and s[i] in (".", ")"):
-        i += 1
-    return s[i:].lstrip()
-
-def _write_plain_block(dst_para: Paragraph, txt: str):
+def _apply_bullet_style_if_available(para: Paragraph):
     """
-    Escribe un bloque de varias líneas en un único párrafo insertando saltos reales (w:br).
+    Intenta aplicar 'List Bullet' si existe; si no, deja el estilo tal cual.
     """
-    lines = txt.split("\n")
-    _clear_paragraph(dst_para)
-    for li_i, line in enumerate(lines):
-        for chunk in _chunks(line):
-            dst_para.add_run(chunk)
-        if li_i < len(lines) - 1:
-            run = dst_para.add_run()
-            run.add_break()
-
-def _write_list_block(first_para: Paragraph, lines: List[str], list_style: str):
-    """
-    Crea una lista (viñetas o numerada). El primer item reutiliza 'first_para';
-    el resto se insertan después, cada uno en su nuevo párrafo con 'list_style'.
-    """
-    # Limpia y convierte el párrafo actual en el primer punto de lista
-    _clear_paragraph(first_para)
     try:
-        first_para.style = list_style
+        para.style = para.part.document.styles["List Bullet"]
     except Exception:
+        # Si no existe el estilo, lo dejamos con el estilo heredado
         pass
 
-    first_line = lines[0]
-    content = _strip_bullet_prefix(first_line) if list_style == "List Bullet" else _strip_number_prefix(first_line)
-    for chunk in _chunks(content):
-        first_para.add_run(chunk)
-
-    # Resto de items
-    cur = first_para
-    for line in lines[1:]:
-        txt = _strip_bullet_prefix(line) if list_style == "List Bullet" else _strip_number_prefix(line)
-        cur = _add_paragraph_after(cur, "", style=list_style)
-        for chunk in _chunks(txt):
-            cur.add_run(chunk)
-
-def _set_paragraph_text_with_structure(para: Paragraph, text: str):
+def _expand_block_into_paragraphs(para: Paragraph, raw_text: str):
     """
-    Escribe 'text' en 'para' con estructura:
-    - Bloques separados por '\n\n' -> párrafos separados.
-    - Dentro de cada bloque:
-        * Si la mayoría de líneas empiezan por '- ' => lista con viñetas (List Bullet).
-        * Si la mayoría son '1. ' / '1) ' => lista numerada (List Number).
-        * Si no, párrafo normal con saltos de línea reales.
+    Expande un bloque grande sobre un placeholder que ocupa todo el párrafo.
+    - Respeta el estilo base del párrafo.
+    - Crea nuevos párrafos (doble salto).
+    - Soporta listas simples (viñetas).
     """
-    text = (text or "").replace("\r", "\n")
-    blocks = text.split("\n\n")
+    base_style = para.style
+    text = _norm_block_text(raw_text)
 
-    # Primer bloque en 'para'
-    first_block = blocks[0]
-    lines = [ln for ln in first_block.split("\n") if ln.strip() != ""]
+    # Si viene vacío, borra el párrafo y listo
+    _clear_paragraph(para)
+    if not text:
+        return
 
-    if not lines:
-        _write_plain_block(para, "")
-    else:
-        bullets = sum(1 for ln in lines if _is_bullet_line(ln))
-        numbers = sum(1 for ln in lines if _is_numbered_line(ln))
+    blocks = _split_blocks_by_blanklines(text)
 
-        if bullets > max(numbers, 0) and bullets >= 2:
-            _write_list_block(para, lines, "List Bullet")
-        elif numbers > max(bullets, 0) and numbers >= 2:
-            _write_list_block(para, lines, "List Number")
+    def add_block_as_paragraphs(block_text: str, first_target_para: Paragraph):
+        """
+        Vuelca un bloque. Si detecta viñetas en (casi) todas las líneas,
+        genera un párrafo por línea con estilo de lista.
+        Si no, vuelca el bloque como texto con saltos de línea dentro de un párrafo.
+        """
+        lines = _split_lines(block_text)
+        # Heurística: ¿es lista? (≥ 2 líneas y mayoría con marca)
+        bullet_count = sum(1 for ln in lines if _is_bullet_line(ln))
+        is_list = len(lines) >= 2 and bullet_count >= max(2, int(0.6 * len(lines)))
+
+        cur = first_target_para
+        cur.style = base_style  # conservar estilo base
+
+        if is_list:
+            # Cada línea -> párrafo con estilo de lista
+            # Primero, si la primera línea era para el párrafo inicial, lo reutilizamos;
+            # si no, insertamos después.
+            # Limpiamos el párrafo por si acaso
+            _clear_paragraph(cur)
+            wrote_first = False
+            for ln in lines:
+                # Limpia el prefijo de viñeta antes de añadir el texto
+                clean = re.sub(r"^\s*(?:[-*•–])\s+", "", ln).strip()
+                if not wrote_first:
+                    cur.add_run(clean)
+                    _apply_bullet_style_if_available(cur)
+                    wrote_first = True
+                else:
+                    np = _insert_paragraph_after(cur)
+                    np.style = base_style
+                    np.add_run(clean)
+                    _apply_bullet_style_if_available(np)
+                    cur = np
         else:
-            _write_plain_block(para, first_block)
+            # Mismo párrafo con saltos de línea
+            _clear_paragraph(cur)
+            _append_text_with_linebreaks(cur, block_text)
+        return cur
 
-    # Resto de bloques (párrafos nuevos)
-    cur = para
+    # Primer bloque en el párrafo original
+    cur = add_block_as_paragraphs(blocks[0], para)
+
+    # Resto de bloques, cada uno empieza en párrafo nuevo
     for b in blocks[1:]:
-        lines_b = [ln for ln in b.split("\n") if ln.strip() != ""]
-        if not lines_b:
-            cur = _add_paragraph_after(cur, "")  # párrafo vacío (se respeta doble salto)
-            continue
-
-        bullets_b = sum(1 for ln in lines_b if _is_bullet_line(ln))
-        numbers_b = sum(1 for ln in lines_b if _is_numbered_line(ln))
-
-        if bullets_b > max(numbers_b, 0) and bullets_b >= 2:
-            # crear lista completa partiendo de un nuevo párrafo
-            cur = _add_paragraph_after(cur, "", style="List Bullet")
-            _write_list_block(cur, lines_b, "List Bullet")
-            # al terminar _write_list_block, 'cur' apunta al primer item; movemos al último
-            # (añadiendo un párrafo vacío no es necesario; el siguiente _add_paragraph_after insertará donde toca)
-            # localizar último item: avanzamos items-1 veces
-            for _ in range(len(lines_b) - 1):
-                cur = cur._p.getnext()  # tipo oxml
-                cur = Paragraph(cur, cur.getparent())  # reconstruir Paragraph
-        elif numbers_b > max(bullets_b, 0) and numbers_b >= 2:
-            cur = _add_paragraph_after(cur, "", style="List Number")
-            _write_list_block(cur, lines_b, "List Number")
-            for _ in range(len(lines_b) - 1):
-                cur = cur._p.getnext()
-                cur = Paragraph(cur, cur.getparent())
-        else:
-            cur = _add_paragraph_after(cur, "")
-            _write_plain_block(cur, b)
+        np = _insert_paragraph_after(cur)
+        np.style = base_style
+        cur = add_block_as_paragraphs(b, np)
 
 def _replace_placeholder_block_in_paragraph(para: Paragraph, placeholder: str, value: str) -> bool:
     """
-    Si el párrafo contiene {{placeholder}}, lo reemplaza por 'value'.
-    Si el placeholder ocupa TODO el párrafo, expande estructura (párrafos/saltos/listas).
-    Devuelve True si hizo reemplazo.
+    Si el párrafo contiene {{placeholder}}:
+      - Si el placeholder ocupa TODO el párrafo => expansión bonita (párrafos reales).
+      - Si es inline => reemplazo dentro del mismo párrafo, preservando el resto.
+    Devuelve True si reemplazó.
     """
-    full_text = "".join(r.text for r in para.runs)
     token = f"{{{{{placeholder}}}}}"
+    # Unir runs para localizar el token con fiabilidad
+    full_text = "".join(r.text for r in para.runs) if para.runs else para.text
+
     if token not in full_text:
         return False
 
-    before, sep, after = full_text.partition(token)
-
-    # Placeholder SOLO en el párrafo -> expansión con estructura
-    if before == "" and after == "":
-        _set_paragraph_text_with_structure(para, str(value or ""))
+    # ¿Ocupa todo el párrafo (ignorando espacios)?
+    if full_text.strip() == token:
+        _expand_block_into_paragraphs(para, value or "")
         return True
 
-    # Inline -> reemplazo simple (se mantiene el resto del contenido del párrafo)
-    new_text = full_text.replace(token, str(value or ""))
+    # Reemplazo inline simple (no crea nuevos párrafos)
+    new_text = full_text.replace(token, "" if value is None else str(value))
     _clear_paragraph(para)
-    for chunk in _chunks(new_text):
-        para.add_run(chunk)
+    _append_text_with_linebreaks(para, new_text)
     return True
 
 def _replace_placeholder_block_everywhere(doc: Document, replacements: Dict[str, str]):
     """
     Reemplaza en cuerpo, tablas, encabezados y pies.
-    Usa motor con estructura (párrafos/saltos/listas) si el placeholder ocupa el párrafo completo.
+    Usa el motor de bloque largo que crea párrafos/saltos si procede.
     """
-    # cuerpo
+    # Cuerpo
     for para in doc.paragraphs:
         if "{{" in para.text:
             for k, v in replacements.items():
                 _replace_placeholder_block_in_paragraph(para, k, v)
 
+    # Tablas
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -205,9 +201,9 @@ def _replace_placeholder_block_everywhere(doc: Document, replacements: Dict[str,
                         for k, v in replacements.items():
                             _replace_placeholder_block_in_paragraph(para, k, v)
 
-    # headers / footers
+    # Encabezados / Pies
     for section in doc.sections:
-        # header
+        # Header
         for para in section.header.paragraphs:
             if "{{" in para.text:
                 for k, v in replacements.items():
@@ -219,7 +215,7 @@ def _replace_placeholder_block_everywhere(doc: Document, replacements: Dict[str,
                         if "{{" in para.text:
                             for k, v in replacements.items():
                                 _replace_placeholder_block_in_paragraph(para, k, v)
-        # footer
+        # Footer
         for para in section.footer.paragraphs:
             if "{{" in para.text:
                 for k, v in replacements.items():
@@ -243,11 +239,20 @@ def export_docx_from_placeholder_map(
 ) -> str:
     """
     Recibe el JSON {placeholder: valor} y lo inyecta en la plantilla.
-    Soporta textos largos con estructura (párrafos, saltos, listas).
+    Soporta textos largos (crea párrafos y saltos) y listas.
     """
     doc = Document(plantilla_path)
-    # Solo strings en el mapa final
-    replacements = {k: ("" if v is None else str(v)) for k, v in (placeholder_map or {}).items()}
+
+    # Solo strings en el mapa final + normalización mínima
+    def _to_str(v):
+        if v is None:
+            return ""
+        if isinstance(v, (int, float)):
+            return str(v)
+        return str(v)
+
+    replacements = {k: _norm_block_text(_to_str(v)) for k, v in (placeholder_map or {}).items()}
+
     _replace_placeholder_block_everywhere(doc, replacements)
     doc.save(out_path)
     return out_path
