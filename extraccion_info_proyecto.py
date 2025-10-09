@@ -118,8 +118,8 @@ def extract_from_project_and_eia(
     except Exception:
         html = "<p>Vista previa no disponible.</p>"
 
-    return datos_regex, usadas, html
 
+    return datos_regex, usadas, html
 
 
 # ----------------------------
@@ -197,7 +197,11 @@ def export_eia_docx(
     """
     json_path = None
     if save_json_al_lado:
-        json_path = os.path.splitext(out_path)[0] + ".placeholders.json"
+        out_dir = os.path.join(os.getcwd(), "resultados_pruebas")
+        os.makedirs(out_dir, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(out_path))[0]
+        json_path = os.path.join(out_dir, f"{base_name}.placeholders.json")
+
 
     placeholder_map = build_placeholder_json_for_template(
         plantilla_path=plantilla_path,
