@@ -1,50 +1,39 @@
-# core/export_docx_template.py
-from typing import Dict, Any, List, Optional
-import regex as re
+from typing import Dict, Any, Optional
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
-
-# =============================
-# --- Utilidades internas ---
-# =============================
+import regex as re
 
 NBSP = "\u00A0"
 ZWSP = "\u200B"
 SOFT = "\u00AD"
 
+# =====================
+# Utilidades básicas
+# =====================
 
-def _clean_text(s: str) -> str:
-    if not s:
-        return ""
-    return s.replace(NBSP, " ").replace(ZWSP, "").replace(SOFT, "")
-
+def _clean(s: str) -> str:
+    return (s or "").replace(NBSP, " ").replace(ZWSP, "").replace(SOFT, "")
 
 def _chunks(s: str, n: int = 3000):
     for i in range(0, len(s), n):
         yield s[i:i + n]
 
-
-def _para_full_text(p: Paragraph) -> str:
-    if getattr(p, "runs", None):
-        return "".join(r.text or "" for r in p.runs)
-    return p.text or ""
-
+def _para_text(p: Paragraph) -> str:
+    return "".join(r.text or "" for r in getattr(p, "runs", [])) or (p.text or "")
 
 def _clear_paragraph(p: Paragraph):
-    for r in list(p.runs or []):
+    """Vacía un párrafo sin eliminarlo."""
+    for r in list(p.runs):
         r.text = ""
-        try:
-            r._element.getparent().remove(r._element)
-        except Exception:
-            pass
     try:
-        p._p.clear_content()
+        for child in list(p._p):
+            p._p.remove(child)
     except Exception:
         pass
 
-
-def _insert_paragraph_after(p: Paragraph, text: str = "") -> Paragraph:
+def _insert_after(p: Paragraph, text: str = "") -> Paragraph:
+    """Inserta un párrafo después del actual."""
     new_p = OxmlElement("w:p")
     p._p.addnext(new_p)
     new_para = Paragraph(new_p, p._parent)
@@ -53,39 +42,40 @@ def _insert_paragraph_after(p: Paragraph, text: str = "") -> Paragraph:
             new_para.add_run(chunk)
     return new_para
 
+# =====================
+# Escritura de bloques
+# =====================
 
-# =============================
-# --- Reemplazo de texto ---
-# =============================
+def _write_with_paragraphs(para: Paragraph, text: str):
+    """
+    Escribe texto respetando saltos dobles (\n\n) como nuevos párrafos.
+    No borra ni reemplaza texto posterior en el documento.
+    """
+    value = _clean(str(text or ""))
+    blocks = [b.strip() for b in value.split("\n\n") if b.strip()]
 
-def _write_paragraphs(para: Paragraph, text: str):
-    """
-    Escribe texto respetando saltos de párrafo (\n\n) y manteniendo el resto del documento.
-    """
-    raw = _clean_text(text or "")
-    blocks = [b.strip() for b in raw.split("\n\n") if b.strip()]
     if not blocks:
         _clear_paragraph(para)
         return
 
     next_elem = para._p.getnext()
-
     _clear_paragraph(para)
-    for chunk in _chunks(blocks[0]):
-        para.add_run(chunk)
+
+    # primer bloque en el párrafo actual
+    para.add_run(blocks[0])
 
     cur = para
     for b in blocks[1:]:
-        cur = _insert_paragraph_after(cur, "")
-        for chunk in _chunks(b):
-            cur.add_run(chunk)
+        cur = _insert_after(cur, b)
 
     if next_elem is not None and cur._p.getnext() != next_elem:
         cur._p.addnext(next_elem)
 
+# =====================
+# Iterador de párrafos
+# =====================
 
 def _iter_paragraphs(doc: Document):
-    """Itera todos los párrafos del documento y sus tablas."""
     for p in doc.paragraphs:
         yield p
     for t in doc.tables:
@@ -109,62 +99,56 @@ def _iter_paragraphs(doc: Document):
                     for p in c.paragraphs:
                         yield p
 
+# =====================
+# Reemplazo principal
+# =====================
 
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
-    Sustituye todos los placeholders {{ key }} en el documento.
+    Reemplaza todos los {{placeholders}}:
+    - Si el párrafo contiene SOLO el marcador → se reemplaza entero con salto de párrafos.
+    - Si hay texto antes o después → se reemplaza inline, manteniendo el resto.
     """
-    for para in _iter_paragraphs(doc):
-        text = _clean_text(_para_full_text(para))
+    for para in list(_iter_paragraphs(doc)):
+        text = _clean(_para_text(para))
         if "{{" not in text:
             continue
 
-        for key, value in replacements.items():
-            pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", flags=re.DOTALL)
-
-            # Si el párrafo contiene solo ese placeholder
-            if pattern.fullmatch(text.strip()):
-                _write_paragraphs(para, str(value or ""))
+        for key, val in (replacements or {}).items():
+            pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
+            match_full = pattern.fullmatch(text.strip())
+            if match_full:
+                _write_with_paragraphs(para, val)
                 break
-
-            # Si está dentro de texto normal
             elif pattern.search(text):
-                new_text = pattern.sub(str(value or ""), text)
+                # reemplazo inline: mantenemos el resto del texto
+                new_text = pattern.sub(str(val or ""), text)
                 _clear_paragraph(para)
-                for chunk in _chunks(new_text):
-                    para.add_run(chunk)
+                para.add_run(new_text)
                 break
 
-
-# =============================
-# --- Tablas con etiquetas ---
-# =============================
-
-def _norm_label(s: str) -> str:
-    s = _clean_text(s or "").lower().strip()
-    s = re.sub(r"[^\w\s]", "", s)
-    s = re.sub(r"\s+", " ", s)
-    return s
-
+# =====================
+# Relleno de tablas por etiquetas
+# =====================
 
 def _fill_tables_by_labels(doc: Document, data: Dict[str, Any]):
-    """
-    Busca tablas con 2 columnas y rellena las celdas derechas
-    si la etiqueta izquierda coincide con una clave del diccionario.
-    """
+    """Busca tablas con etiquetas a la izquierda y escribe el valor a la derecha."""
     for t in doc.tables:
         for r in t.rows:
             if len(r.cells) < 2:
                 continue
-            label = _norm_label(_para_full_text(r.cells[0]))
-            if label in data and data[label]:
-                _clear_paragraph(r.cells[1].paragraphs[0])
-                r.cells[1].paragraphs[0].add_run(str(data[label]))
+            label = _clean(_para_text(r.cells[0])).lower().strip()
+            if not label:
+                continue
+            for k, v in data.items():
+                if label == k.lower().strip() and v not in (None, ""):
+                    _clear_paragraph(r.cells[1].paragraphs[0])
+                    r.cells[1].paragraphs[0].add_run(str(v))
+                    break
 
-
-# =============================
-# --- API principal ---
-# =============================
+# =====================
+# API principal
+# =====================
 
 def export_docx_from_placeholder_map(
     placeholder_map: Dict[str, Any],
@@ -173,13 +157,10 @@ def export_docx_from_placeholder_map(
     *,
     label_values: Optional[Dict[str, Any]] = None
 ) -> str:
-    """
-    Reemplaza placeholders {{ key }} y rellena tablas de 2 columnas por etiquetas.
-    """
+    """Aplica todos los reemplazos sobre una plantilla DOCX."""
     doc = Document(plantilla_path)
-
     replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
-    replacements.pop("tabla_coordenadas", None)
+    replacements.pop("tabla_coordenadas", None)  # se evita generar bloque ficticio
 
     _replace_placeholders(doc, replacements)
     _fill_tables_by_labels(doc, label_values or placeholder_map)

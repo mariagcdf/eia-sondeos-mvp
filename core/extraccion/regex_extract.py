@@ -42,7 +42,7 @@ def regex_extract_min_fields(text: str) -> Dict[str, Any]:
             "potencia_bombeo_kw": None,
         },
         "coordenadas": {  # principal (nuevo)
-            "utm": {"x": None, "y": None, "huso": None, "datum": None},
+            "utm": {"x": None, "y": None, "huso": None},
             "geo": {"lat": None, "lon": None},
         },
         "localizacion": {
