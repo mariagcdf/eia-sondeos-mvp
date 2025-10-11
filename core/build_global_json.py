@@ -90,19 +90,19 @@ def build_global_placeholders(
     GEO = (C.get("geo") or {})
     FLAGS = (merged.get("flags") or {})
 
-    # 5) Coalescencia de bloques (solo PH_Situacion) + geología con/ sin tilde
+    # 5) Coalescencia de bloques (solo PH_Localizacion) + geología con/ sin tilde
     PH_Antecedentes = bloques.get("PH_Antecedentes", "")
-    PH_Situacion = bloques.get("PH_Situacion", "")
+    PH_Localizacion = bloques.get("PH_Localizacion", "")
     PH_Consumo = bloques.get("PH_Consumo", "")
-    geologia_txt = _best(bloques.get("geologia"), bloques.get("geología"))
+    geologia = bloques.get("geologia", "")
 
     # 6) Construcción del JSON de placeholders (canónico, sin alternativas)
     placeholders: Dict[str, str] = {
         # Bloques
         "PH_Antecedentes": PH_Antecedentes,
-        "PH_Situacion": PH_Situacion,
+        "PH_Localizacion": PH_Localizacion,
         "PH_Consumo": PH_Consumo,
-        "geologia": geologia_txt,
+        "geologia": geologia,
 
         # Coordenadas (del merge/regex)
         "utm_x_principal": _fmt_num(_best(UTM.get("x"), C.get("x"))),

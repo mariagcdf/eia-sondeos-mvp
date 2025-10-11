@@ -144,7 +144,7 @@ def extraer_bloques_literal(texto_completo: str) -> Dict[str, str]:
     # ---- SALIDA (sin alternativas, sin municipio/provincia aquí)
     return {
         "PH_Antecedentes": antecedentes,
-        "PH_Situacion": situacion,
+        "PH_Localizacion": situacion,
         "PH_Consumo": consumo,
         "geologia": geologia,
     }

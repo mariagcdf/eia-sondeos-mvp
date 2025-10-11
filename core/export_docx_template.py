@@ -158,9 +158,17 @@ def export_docx_from_placeholder_map(
     label_values: Optional[Dict[str, Any]] = None
 ) -> str:
     """Aplica todos los reemplazos sobre una plantilla DOCX."""
+
+    # 🧹 Limpieza preventiva de claves fantasma
+    for clave in ["tabla_coordenadas", "PH_situacion"]:
+        placeholder_map.pop(clave, None)
+
     doc = Document(plantilla_path)
     replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
-    replacements.pop("tabla_coordenadas", None)  # se evita generar bloque ficticio
+
+    # También aseguramos que no entren de nuevo por accidente
+    replacements.pop("tabla_coordenadas", None)
+    replacements.pop("PH_situacion", None)
 
     _replace_placeholders(doc, replacements)
     _fill_tables_by_labels(doc, label_values or placeholder_map)
