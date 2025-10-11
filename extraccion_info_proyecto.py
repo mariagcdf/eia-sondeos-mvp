@@ -87,22 +87,6 @@ def _fmt_num(v) -> str:
         return str(v)
 
 
-def _table_from_coords(coords: Dict[str, Any]) -> str:
-    """Genera bloque de texto con coordenadas (UTM + geodésicas)."""
-    utm = (coords.get("utm") or {})
-    geo = (coords.get("geo") or {})
-    lines = [
-        f"UTM X: {_fmt_num(utm.get('x'))}",
-        f"UTM Y: {_fmt_num(utm.get('y'))}",
-        f"Huso: {utm.get('huso') or '—'}",
-        f"Datum: {utm.get('datum') or '—'}",
-    ]
-    if geo.get("lat") or geo.get("lon"):
-        lines.append(f"Latitud: {geo.get('lat') or '—'}")
-        lines.append(f"Longitud: {geo.get('lon') or '—'}")
-    return "\n".join(lines).strip()
-
-
 def _detectar_sondeo_existente(texto: str) -> bool:
     """Heurística simple para 'sondeo existente'."""
     return bool(re.search(r"\bsondeo\s+existente\b", texto or "", re.I))
@@ -270,7 +254,7 @@ def build_placeholder_json_for_template(
         "PH_Antecedentes", "PH_Situacion", "PH_Consumo", "geologia", "aviso_existente",
         # Coordenadas
         "utm_x_principal", "utm_y_principal", "utm_huso_principal",
-        "geo_lat_principal", "geo_lon_principal", "tabla_coordenadas",
+        "geo_lat_principal", "geo_lon_principal",
         # Localización
         "municipio", "provincia",
         # Parámetros
@@ -320,8 +304,6 @@ def build_placeholder_json_for_template(
             val = aviso_texto
 
         # Coordenadas (del merge/regex)
-        elif kraw == "tabla_coordenadas":
-            val = _table_from_coords(c)
         elif kraw == "utm_x_principal":
             val = utm.get("x", "")
         elif kraw == "utm_y_principal":

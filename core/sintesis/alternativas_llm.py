@@ -1,6 +1,6 @@
 # core/sintesis/alternativas_llm.py
 import json
-from core.llm_utils import get_client
+from core.extraccion.llm_utils import get_client
 
 def redactar_alternativas_struct(datos_min: dict,
                                  model: str = "gpt-4.1-mini",

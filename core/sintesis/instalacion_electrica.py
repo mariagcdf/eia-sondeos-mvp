@@ -1,5 +1,5 @@
 # core/sintesis/instalacion_llm.py
-from core.llm_utils import llm_chat
+from core.extraccion.llm_utils import llm_chat
 import json
 
 def redactar_instalacion_llm(datos_min: dict, tipo: str = "fotovoltaica") -> str:

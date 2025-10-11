@@ -110,7 +110,7 @@ def build_global_placeholders(
         "utm_huso_principal": _best(UTM.get("huso"), C.get("huso")),
         "geo_lat_principal": _best(GEO.get("lat"), C.get("lat")),  # por si LLM lo incluyera
         "geo_lon_principal": _best(GEO.get("lon"), C.get("lon")),
-        "tabla_coordenadas": _table_from_coords(C),
+
 
         # Localización
         "municipio": _best(L.get("municipio")),

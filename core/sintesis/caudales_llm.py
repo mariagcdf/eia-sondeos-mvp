@@ -1,7 +1,7 @@
 # core/sintesis/caudales_llm.py
 import json
 from typing import Dict, Any
-from core.llm_utils import llm_chat, parse_json_output
+from core.extraccion.llm_utils import llm_chat, parse_json_output
 
 
 def extract_caudales_from_text(texto_full: str, model: str = "gpt-4.1-mini") -> Dict[str, Any]:
