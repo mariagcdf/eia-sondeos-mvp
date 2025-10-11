@@ -108,15 +108,14 @@ def build_global_placeholders(
         "utm_x_principal": _fmt_num(_best(UTM.get("x"), C.get("x"))),
         "utm_y_principal": _fmt_num(_best(UTM.get("y"), C.get("y"))),
         "utm_huso_principal": _best(UTM.get("huso"), C.get("huso")),
-        "geo_lat_principal": _best(GEO.get("lat"), C.get("lat")),  # por si LLM lo incluyera
+        "geo_lat_principal": _best(GEO.get("lat"), C.get("lat")),
         "geo_lon_principal": _best(GEO.get("lon"), C.get("lon")),
-
 
         # Localización
         "municipio": _best(L.get("municipio")),
         "provincia": _best(L.get("provincia")),
 
-        # Parámetros (prioriza valores numéricos coherentes del merge)
+        # Parámetros
         "profundidad": _fmt_num(_best(P.get("profundidad"), P.get("profundidad_proyectada_m"))),
         "diametro_inicial": _fmt_num(P.get("diametro_inicial")),
         "diametro_perforacion_inicial_mm": _fmt_num(P.get("diametro_perforacion_inicial_mm")),
@@ -124,7 +123,7 @@ def build_global_placeholders(
         "instalacion_electrica": _best(P.get("instalacion_electrica")),
         "potencia_bombeo_kw": _fmt_num(P.get("potencia_bombeo_kw")),
 
-        # Aviso (por si tu pipeline lo añade)
+        # Aviso
         "aviso_existente": (
             "⚠ Se ha detectado un SONDEO EXISTENTE en el documento. "
             "Recuerda copiar manualmente la parte referida al sondeo existente."
@@ -132,25 +131,31 @@ def build_global_placeholders(
         ),
     }
 
-    # 7) (Opcional) añade TODO el flatten para auditoría (no afecta a placeholders)
+    # 7) Aplanado completo para depuración
     flat_all = _flatten(merged)
-    # Suma también variantes útiles para inspección
-    for k, v in {
-        "PH_Situacion": PH_Situacion,
-        "geología": bloques.get("geología", "")
-    }.items():
-        flat_all.setdefault(k, v)
 
-    # 8) Guardado
+    # 8) LIMPIEZA FINAL — eliminamos claves incorrectas o redundantes
+    eliminar = [k for k in list(placeholders.keys())
+                if k in ("PH_situacion", "tabla_coordenadas")
+                or k.startswith("localizacion.")]
+    for k in eliminar:
+        placeholders.pop(k, None)
+
+    flat_all = {k: v for k, v in flat_all.items()
+                if k not in ("PH_situacion", "tabla_coordenadas")
+                and not k.startswith("localizacion.")}
+
+    # 9) Guardado limpio
     if save_to:
         os.makedirs(os.path.dirname(save_to), exist_ok=True) if os.path.dirname(save_to) else None
+        clean_out = {k: v for k, v in {**placeholders, **flat_all}.items()
+                     if not k.startswith("localizacion.")
+                     and k not in ("PH_situacion", "tabla_coordenadas")}
         with open(save_to, "w", encoding="utf-8") as f:
-            json.dump(
-                {**placeholders, **{k: v for k, v in flat_all.items() if k not in placeholders}},
-                f, ensure_ascii=False, indent=2
-            )
+            json.dump(clean_out, f, ensure_ascii=False, indent=2)
 
     return placeholders
+
 
 # --- helper simple por si quieres solo “JSON de placeholders a disco” ---
 def build_and_save_global_placeholders(

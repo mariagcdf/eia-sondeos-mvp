@@ -1,22 +1,19 @@
-# app.py
 import os
 from pathlib import Path
 from datetime import datetime
 import streamlit as st
 from dotenv import load_dotenv
 
-# Importa las funciones nuevas
-from extraccion_info_proyecto import extract_from_project_and_eia
+from core.regex_extract import regex_extract_min_fields
+from core.build_global_json import build_global_placeholders
 from core.export_docx_template import export_docx_from_placeholder_map
+from core.extraccion.pdf_reader import leer_pdf_texto_completo
 
 load_dotenv(override=True)
 st.set_page_config(page_title="EIA (Sondeo nuevo)", page_icon="🧭", layout="centered")
 
-st.title("🧭 Generador de EIA — Sondeo nuevo (principal)")
-st.caption(
-    "Se extraen los datos del proyecto y se genera el DOCX con una sola tabla "
-    "para el sondeo nuevo. Si se detecta un sondeo existente, se insertará un aviso."
-)
+st.title("🧭 Generador de EIA — Sondeo nuevo (flujo limpio)")
+st.caption("Versión actualizada sin placeholders antiguos (PH_situacion, tabla_coordenadas, etc.)")
 
 pdf = st.file_uploader("Sube el PROYECTO en PDF", type=["pdf"])
 
@@ -24,35 +21,29 @@ if not pdf:
     st.info("Sube un PDF para comenzar.")
 else:
     with st.spinner("Extrayendo información…"):
-        try:
-            datos_min, placeholders = extract_from_project_and_eia(pdf)
-            st.success("✅ Extracción completada.")
-        except Exception as e:
-            st.error("❌ Error al procesar el PDF.")
-            st.error(f"Detalle técnico: {e}")
-            st.stop()
+        texto_completo = leer_pdf_texto_completo(pdf)
+        datos_regex = regex_extract_min_fields(texto_completo)
+        placeholders = build_global_placeholders(
+            texto_relevante=texto_completo,
+            texto_completo_pdf=texto_completo,
+            datos_regex_min=datos_regex
+        )
+        st.success("✅ Extracción completada (flujo limpio).")
 
-    # ===== Mostrar resumen =====
-    st.subheader("Vista previa de datos extraídos")
-    st.json(placeholders)
-
-    # ===== Exportar =====
-    st.subheader("Exportar documento Word")
-
+    # ===== Exportar DOCX =====
+    st.subheader("Exportar")
     hoy = datetime.now().strftime("%Y%m%d")
     base = f"EIA_simplificada_{hoy}".replace(" ", "_")
-    out_dir = Path("outputs")
-    out_dir.mkdir(exist_ok=True)
+    out_dir = Path("outputs"); out_dir.mkdir(exist_ok=True)
     docx_path = out_dir / f"{base}.docx"
 
-    with st.spinner("Generando DOCX..."):
-        saved = export_docx_from_placeholder_map(
-            placeholder_map=placeholders,
-            plantilla_path="plantilla_EIA.docx",
-            out_path=str(docx_path),
-        )
+    export_docx_from_placeholder_map(
+        placeholder_map=placeholders,
+        plantilla_path="plantilla_EIA.docx",
+        out_path=str(docx_path)
+    )
 
-    with open(saved, "rb") as f:
+    with open(docx_path, "rb") as f:
         st.download_button(
             "⬇️ Descargar DOCX",
             data=f,
