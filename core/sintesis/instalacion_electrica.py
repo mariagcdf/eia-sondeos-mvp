@@ -30,6 +30,8 @@ def redactar_instalacion_llm(datos_min: dict, tipo: str = "fotovoltaica") -> str
 Redacta un único párrafo (3–6 líneas) con tono técnico formal para una EIA. 
 Debe describir la solución de alimentación eléctrica del sondeo, justificando brevemente su idoneidad 
 y citando, si procede, la potencia estimada de la bomba. Evita florituras y cifras inventadas.
+Cuando sea conexion a red municipal algo asi: El sistema de bombeo del sondeo se alimentará mediante conexión a la red eléctrica municipal, aprovechando la proximidad de la parcela al núcleo urbano. Esta opción garantiza un suministro energético continuo y fiable, con un impacto ambiental mínimo y sin necesidad de instalaciones auxiliares ni acumuladores, asegurando así la operatividad permanente del sistema de captación.
+Si es fotovoltaica algo asi: El sistema de bombeo del sondeo se alimentará mediante una instalación fotovoltaica autónoma, diseñada para cubrir las necesidades energéticas de la bomba de agua. Esta solución es especialmente adecuada dada la ubicación del sondeo en una zona con buena radiación solar y la ausencia de conexión a la red eléctrica municipal. La instalación incluirá paneles solares, un inversor y un sistema de acumulación para garantizar el suministro energético durante las horas sin sol, asegurando así la operatividad continua del sistema de captación.
 
 Condiciones del proyecto (si no hay dato, ignóralo con naturalidad):
 {json.dumps(contexto, ensure_ascii=False, indent=2)}

@@ -37,7 +37,6 @@ def _best(*vals) -> str:
     cand = [str(v) for v in vals if v not in (None, "", [])]
     if not cand:
         return ""
-    # primero no vacío; entre no vacíos, el más largo
     return max(cand, key=lambda x: (len(x.strip()), -cand.index(x)))
 
 def _table_from_coords(coords: Dict[str, Any]) -> str:
@@ -54,7 +53,49 @@ def _table_from_coords(coords: Dict[str, Any]) -> str:
         lines.append(f"Longitud: {geo.get('lon') or '—'}")
     return "\n".join(lines).strip()
 
-# --- núcleo: construir JSON global de placeholders ---
+# --- formateador avanzado para PH_Consumo ---
+def _format_consumo(text: str) -> str:
+    """Limpia y formatea el bloque de consumo: elimina títulos, añade saltos y negritas automáticas."""
+    if not text:
+        return ""
+
+    s = re.sub(r"[ \t]+", " ", text)
+    s = re.sub(r"\n{2,}", "\n", s).strip()
+
+    # Elimina encabezados tipo "3.1. Caudal necesario"
+    s = re.sub(
+        r"^\s*(\d+[.,]?\d*\s*)?(Caudal\s+necesario)\s*[:\-–—]?\s*",
+        "",
+        s,
+        flags=re.IGNORECASE
+    )
+
+    # Añade saltos dobles antes de bloques relevantes
+    patrones_salto = [
+        r"(?=\bConsumos\s*:)",
+        r"(?=\bEl\s+reparto)",
+        r"(?=\bSondeo\s+(nuevo|existente))",
+        r"(?=\bPozo\s+existente)",
+        r"(?=\bNOTA\s*:)",
+    ]
+    for pat in patrones_salto:
+        s = re.sub(pat, "\n\n", s, flags=re.IGNORECASE)
+
+    # Negritas automáticas
+    reemplazos_negrita = {
+        r"\b(Consumos\s*:)"           : r"<b>\1</b>",
+        r"\b(Sondeo\s+nuevo\s*:?)"    : r"<b>\1</b>",
+        r"\b(Sondeo\s+existente\s*:?)": r"<b>\1</b>",
+        r"\b(Pozo\s+existente\s*:?)"  : r"<b>\1</b>",
+        r"\b(NOTA\s*:)"               : r"<b>\1</b>",
+    }
+    for pat, rep in reemplazos_negrita.items():
+        s = re.sub(pat, rep, s, flags=re.IGNORECASE)
+
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+# --- núcleo principal ---
 def build_global_placeholders(
     texto_relevante: str,
     texto_completo_pdf: str,
@@ -64,23 +105,20 @@ def build_global_placeholders(
     model: str = "gpt-4.1-mini"
 ) -> Dict[str, str]:
     """
-    Devuelve un dict {placeholder: valor} sin depender de la plantilla.
-    Toma datos de:
-      - LLM estructurado (llm_utils.build_prompt / call_llm_extract_json)
-      - datos_regex_min (tu extracción por regex)
-      - extraer_bloques_literal (bloques largos: PH_Antecedentes, PH_Situacion, PH_Consumo, geologia)
+    Devuelve un dict {placeholder: valor} limpio y coherente con la plantilla.
     """
-    # 1) LLM estructurado
     from core.extraccion.llm_utils import build_prompt, call_llm_extract_json, merge_min
+    from core.extraccion.bloques_textuales import extraer_bloques_literal
+
+    # 1) LLM estructurado
     prompt = build_prompt(texto_relevante)
     datos_llm = call_llm_extract_json(prompt, model=model, texto_relevante=texto_relevante)
 
-    # 2) Bloques literales (SOLO bloques largos)
-    from core.extraccion.bloques_textuales import extraer_bloques_literal
-    bloques = extraer_bloques_literal(texto_completo_pdf)  # PH_Antecedentes, PH_Situacion, PH_Consumo, geologia
+    # 2) Bloques literales
+    bloques = extraer_bloques_literal(texto_completo_pdf)
 
     # 3) Merge LLM + regex
-    merged = merge_min(datos_llm, datos_regex_min)  # secciones: parametros, coordenadas, localizacion, particularidades
+    merged = merge_min(datos_llm, datos_regex_min)
 
     # 4) Accesos cómodos
     P = merged.get("parametros", {}) or {}
@@ -90,40 +128,31 @@ def build_global_placeholders(
     GEO = (C.get("geo") or {})
     FLAGS = (merged.get("flags") or {})
 
-    # 5) Coalescencia de bloques (solo PH_Localizacion) + geología con/ sin tilde
+    # 5) Coalescencia de bloques
     PH_Antecedentes = bloques.get("PH_Antecedentes", "")
-    PH_Localizacion = bloques.get("PH_Localizacion", "")
-    PH_Consumo = bloques.get("PH_Consumo", "")
-    geologia = bloques.get("geologia", "")
+    PH_Localizacion = bloques.get("PH_Localizacion", "") or bloques.get("PH_Situacion", "")
+    PH_Consumo = _format_consumo(bloques.get("PH_Consumo", ""))
+    geologia = bloques.get("geologia", "") or bloques.get("geología", "")
 
-    # 6) Construcción del JSON de placeholders (canónico, sin alternativas)
+    # 6) Construcción del JSON de placeholders
     placeholders: Dict[str, str] = {
-        # Bloques
         "PH_Antecedentes": PH_Antecedentes,
         "PH_Localizacion": PH_Localizacion,
         "PH_Consumo": PH_Consumo,
         "geologia": geologia,
-
-        # Coordenadas (del merge/regex)
         "utm_x_principal": _fmt_num(_best(UTM.get("x"), C.get("x"))),
         "utm_y_principal": _fmt_num(_best(UTM.get("y"), C.get("y"))),
         "utm_huso_principal": _best(UTM.get("huso"), C.get("huso")),
         "geo_lat_principal": _best(GEO.get("lat"), C.get("lat")),
         "geo_lon_principal": _best(GEO.get("lon"), C.get("lon")),
-
-        # Localización
         "municipio": _best(L.get("municipio")),
         "provincia": _best(L.get("provincia")),
-
-        # Parámetros
         "profundidad": _fmt_num(_best(P.get("profundidad"), P.get("profundidad_proyectada_m"))),
         "diametro_inicial": _fmt_num(P.get("diametro_inicial")),
         "diametro_perforacion_inicial_mm": _fmt_num(P.get("diametro_perforacion_inicial_mm")),
         "caudal_max_instantaneo_l_s": _fmt_num(P.get("caudal_max_instantaneo_l_s")),
         "instalacion_electrica": _best(P.get("instalacion_electrica")),
         "potencia_bombeo_kw": _fmt_num(P.get("potencia_bombeo_kw")),
-
-        # Aviso
         "aviso_existente": (
             "⚠ Se ha detectado un SONDEO EXISTENTE en el documento. "
             "Recuerda copiar manualmente la parte referida al sondeo existente."
@@ -134,7 +163,7 @@ def build_global_placeholders(
     # 7) Aplanado completo para depuración
     flat_all = _flatten(merged)
 
-    # 8) LIMPIEZA FINAL — eliminamos claves incorrectas o redundantes
+    # 8) LIMPIEZA FINAL — eliminamos claves antiguas o redundantes
     eliminar = [k for k in list(placeholders.keys())
                 if k in ("PH_situacion", "tabla_coordenadas")
                 or k.startswith("localizacion.")]

@@ -13,17 +13,20 @@ SOFT = "\u00AD"
 # =====================
 
 def _clean(s: str) -> str:
+    """Limpia caracteres invisibles y no imprimibles."""
     return (s or "").replace(NBSP, " ").replace(ZWSP, "").replace(SOFT, "")
 
 def _chunks(s: str, n: int = 3000):
+    """Divide un texto largo en fragmentos pequeños para evitar errores de Word."""
     for i in range(0, len(s), n):
         yield s[i:i + n]
 
 def _para_text(p: Paragraph) -> str:
+    """Extrae el texto completo de un párrafo, incluyendo los runs."""
     return "".join(r.text or "" for r in getattr(p, "runs", [])) or (p.text or "")
 
 def _clear_paragraph(p: Paragraph):
-    """Vacía un párrafo sin eliminarlo."""
+    """Vacía un párrafo sin eliminarlo del documento."""
     for r in list(p.runs):
         r.text = ""
     try:
@@ -33,7 +36,7 @@ def _clear_paragraph(p: Paragraph):
         pass
 
 def _insert_after(p: Paragraph, text: str = "") -> Paragraph:
-    """Inserta un párrafo después del actual."""
+    """Inserta un nuevo párrafo inmediatamente después del actual."""
     new_p = OxmlElement("w:p")
     p._p.addnext(new_p)
     new_para = Paragraph(new_p, p._parent)
@@ -49,7 +52,6 @@ def _insert_after(p: Paragraph, text: str = "") -> Paragraph:
 def _write_with_paragraphs(para: Paragraph, text: str):
     """
     Escribe texto respetando saltos dobles (\n\n) como nuevos párrafos.
-    No borra ni reemplaza texto posterior en el documento.
     """
     value = _clean(str(text or ""))
     blocks = [b.strip() for b in value.split("\n\n") if b.strip()]
@@ -61,7 +63,7 @@ def _write_with_paragraphs(para: Paragraph, text: str):
     next_elem = para._p.getnext()
     _clear_paragraph(para)
 
-    # primer bloque en el párrafo actual
+    # Primer bloque en el párrafo actual
     para.add_run(blocks[0])
 
     cur = para
@@ -76,6 +78,7 @@ def _write_with_paragraphs(para: Paragraph, text: str):
 # =====================
 
 def _iter_paragraphs(doc: Document):
+    """Itera sobre todos los párrafos del documento (texto, tablas, encabezado y pie)."""
     for p in doc.paragraphs:
         yield p
     for t in doc.tables:
@@ -106,7 +109,7 @@ def _iter_paragraphs(doc: Document):
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
     Reemplaza todos los {{placeholders}}:
-    - Si el párrafo contiene SOLO el marcador → se reemplaza entero con salto de párrafos.
+    - Si el párrafo contiene SOLO el marcador → se reemplaza entero con saltos de párrafo.
     - Si hay texto antes o después → se reemplaza inline, manteniendo el resto.
     """
     for para in list(_iter_paragraphs(doc)):
@@ -121,18 +124,17 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
                 _write_with_paragraphs(para, val)
                 break
             elif pattern.search(text):
-                # reemplazo inline: mantenemos el resto del texto
                 new_text = pattern.sub(str(val or ""), text)
                 _clear_paragraph(para)
                 para.add_run(new_text)
                 break
 
 # =====================
-# Relleno de tablas por etiquetas
+# Relleno de tablas
 # =====================
 
 def _fill_tables_by_labels(doc: Document, data: Dict[str, Any]):
-    """Busca tablas con etiquetas a la izquierda y escribe el valor a la derecha."""
+    """Rellena tablas con formato 'Etiqueta | Valor'."""
     for t in doc.tables:
         for r in t.rows:
             if len(r.cells) < 2:
@@ -147,7 +149,7 @@ def _fill_tables_by_labels(doc: Document, data: Dict[str, Any]):
                     break
 
 # =====================
-# API principal
+# Función principal
 # =====================
 
 def export_docx_from_placeholder_map(
@@ -157,18 +159,15 @@ def export_docx_from_placeholder_map(
     *,
     label_values: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Aplica todos los reemplazos sobre una plantilla DOCX."""
-
-    # 🧹 Limpieza preventiva de claves fantasma
-    for clave in ["tabla_coordenadas", "PH_situacion"]:
-        placeholder_map.pop(clave, None)
+    """
+    Aplica todos los placeholders {{clave}} definidos en un JSON
+    sobre una plantilla Word (.docx) y exporta el resultado.
+    """
 
     doc = Document(plantilla_path)
-    replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
 
-    # También aseguramos que no entren de nuevo por accidente
-    replacements.pop("tabla_coordenadas", None)
-    replacements.pop("PH_situacion", None)
+    # Crear el diccionario de reemplazos (sin tocar nada de coordenadas)
+    replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
 
     _replace_placeholders(doc, replacements)
     _fill_tables_by_labels(doc, label_values or placeholder_map)
