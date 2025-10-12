@@ -2,7 +2,11 @@ from typing import Dict, Any, Optional
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
+from pathlib import Path
 import regex as re
+import subprocess
+from core.sintesis.alternativas_llm import generar_alternativas_llm
+import json
 
 NBSP = "\u00A0"
 ZWSP = "\u200B"
@@ -22,18 +26,14 @@ def _chunks(s: str, n: int = 3000):
         yield s[i:i + n]
 
 def _para_text(p: Paragraph) -> str:
-    """Extrae el texto completo de un párrafo, incluyendo los runs."""
+    """Extrae el texto completo de un párrafo."""
     return "".join(r.text or "" for r in getattr(p, "runs", [])) or (p.text or "")
 
-def _clear_paragraph(p: Paragraph):
-    """Vacía un párrafo sin eliminarlo del documento."""
+def _clear_paragraph_keep_format(p: Paragraph):
+    """Vacía un párrafo manteniendo su formato (sangría, alineación, estilo)."""
     for r in list(p.runs):
         r.text = ""
-    try:
-        for child in list(p._p):
-            p._p.remove(child)
-    except Exception:
-        pass
+    # No eliminamos los nodos XML, solo el texto
 
 def _insert_after(p: Paragraph, text: str = "") -> Paragraph:
     """Inserta un nuevo párrafo inmediatamente después del actual."""
@@ -46,32 +46,78 @@ def _insert_after(p: Paragraph, text: str = "") -> Paragraph:
     return new_para
 
 # =====================
-# Escritura de bloques
+# Escritura con saltos
 # =====================
 
 def _write_with_paragraphs(para: Paragraph, text: str):
     """
-    Escribe texto respetando saltos dobles (\n\n) como nuevos párrafos.
+    Escribe texto respetando saltos dobles (\n\n) como nuevos párrafos,
+    preservando el formato original del párrafo.
     """
     value = _clean(str(text or ""))
     blocks = [b.strip() for b in value.split("\n\n") if b.strip()]
 
+    fmt = para.paragraph_format
+    style = para.style
+    alignment = para.alignment
+
+    _clear_paragraph_keep_format(para)
     if not blocks:
-        _clear_paragraph(para)
         return
 
-    next_elem = para._p.getnext()
-    _clear_paragraph(para)
-
-    # Primer bloque en el párrafo actual
     para.add_run(blocks[0])
+    para.paragraph_format.left_indent = fmt.left_indent
+    para.paragraph_format.first_line_indent = fmt.first_line_indent
+    if hasattr(fmt, "hanging_indent"):
+        para.paragraph_format.hanging_indent = fmt.hanging_indent
+    para.alignment = alignment
+    para.style = style
 
     cur = para
     for b in blocks[1:]:
         cur = _insert_after(cur, b)
+        cur.paragraph_format.left_indent = fmt.left_indent
+        cur.paragraph_format.first_line_indent = fmt.first_line_indent
+        if hasattr(fmt, "hanging_indent"):
+            cur.paragraph_format.hanging_indent = fmt.hanging_indent
+        cur.alignment = alignment
+        cur.style = style
 
-    if next_elem is not None and cur._p.getnext() != next_elem:
-        cur._p.addnext(next_elem)
+
+def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
+    """
+    Reemplaza todos los {{placeholders}}:
+    - Si el párrafo contiene SOLO el marcador → reemplaza con párrafos nuevos (manteniendo formato).
+    - Si hay texto antes o después → reemplazo inline conservando estilo y sangría.
+    """
+    for para in list(_iter_paragraphs(doc)):
+        text = _clean(_para_text(para))
+        if "{{" not in text:
+            continue
+
+        for key, val in (replacements or {}).items():
+            pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
+
+            if pattern.fullmatch(text.strip()):
+                _write_with_paragraphs(para, val)
+                break
+            elif pattern.search(text):
+                fmt = para.paragraph_format
+                style = para.style
+                alignment = para.alignment
+
+                new_text = pattern.sub(str(val or ""), text)
+                _clear_paragraph_keep_format(para)
+                para.add_run(new_text)
+
+                para.paragraph_format.left_indent = fmt.left_indent
+                para.paragraph_format.first_line_indent = fmt.first_line_indent
+                if hasattr(fmt, "hanging_indent"):
+                    para.paragraph_format.hanging_indent = fmt.hanging_indent
+                para.alignment = alignment
+                para.style = style
+                break
+
 
 # =====================
 # Iterador de párrafos
@@ -109,8 +155,8 @@ def _iter_paragraphs(doc: Document):
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
     Reemplaza todos los {{placeholders}}:
-    - Si el párrafo contiene SOLO el marcador → se reemplaza entero con saltos de párrafo.
-    - Si hay texto antes o después → se reemplaza inline, manteniendo el resto.
+    - Si el párrafo contiene SOLO el marcador → reemplaza con párrafos nuevos (manteniendo formato).
+    - Si hay texto antes o después → reemplazo inline conservando estilo y sangría.
     """
     for para in list(_iter_paragraphs(doc)):
         text = _clean(_para_text(para))
@@ -119,14 +165,25 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
 
         for key, val in (replacements or {}).items():
             pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
-            match_full = pattern.fullmatch(text.strip())
-            if match_full:
+
+            if pattern.fullmatch(text.strip()):
                 _write_with_paragraphs(para, val)
                 break
             elif pattern.search(text):
+                fmt = para.paragraph_format
+                style = para.style
+                alignment = para.alignment
+
                 new_text = pattern.sub(str(val or ""), text)
-                _clear_paragraph(para)
+                _clear_paragraph_keep_format(para)
                 para.add_run(new_text)
+
+                para.paragraph_format.left_indent = fmt.left_indent
+                para.paragraph_format.first_line_indent = fmt.first_line_indent
+                if hasattr(fmt, "hanging_indent"):
+                    para.paragraph_format.hanging_indent = fmt.hanging_indent
+                para.alignment = alignment
+                para.style = style
                 break
 
 # =====================
@@ -144,7 +201,7 @@ def _fill_tables_by_labels(doc: Document, data: Dict[str, Any]):
                 continue
             for k, v in data.items():
                 if label == k.lower().strip() and v not in (None, ""):
-                    _clear_paragraph(r.cells[1].paragraphs[0])
+                    _clear_paragraph_keep_format(r.cells[1].paragraphs[0])
                     r.cells[1].paragraphs[0].add_run(str(v))
                     break
 
@@ -162,15 +219,53 @@ def export_docx_from_placeholder_map(
     """
     Aplica todos los placeholders {{clave}} definidos en un JSON
     sobre una plantilla Word (.docx) y exporta el resultado.
+    Mantiene formato, sangrías y estilos del párrafo original.
     """
 
-    doc = Document(plantilla_path)
+    # 1️⃣ Ejecutar redactor automático antes de exportar
+    redactor_script = Path("core/sintesis/redactar_placeholder.py")
+    if redactor_script.exists():
+        print("🧠 Ejecutando redactor automático de placeholders...")
+        try:
+            subprocess.run(["python", str(redactor_script)], check=True)
+            print("✅ Redacción automática completada.")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️ Error ejecutando el redactor automático: {e}")
+    else:
+        print("⚠️ No se encontró redactar_placeholder.py — se omite la redacción automática.")
 
-    # Crear el diccionario de reemplazos (sin tocar nada de coordenadas)
+     # 2️⃣ Generar Alternativas automáticamente si faltan
+    try:
+        missing = [k for k in ["PH_Alternativas_Desc", "PH_Alternativas_Val", "PH_Alternativas_Just"]
+                   if not placeholder_map.get(k)]
+        if missing:
+            print(f"🤖 Generando automáticamente las secciones de alternativas: {', '.join(missing)}")
+            alt_dict = generar_alternativas_llm(placeholder_map)
+            placeholder_map.update(alt_dict)
+
+            # Guardar en el JSON más reciente para persistir los cambios
+            output_dir = Path("outputs")
+            json_files = sorted(output_dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+            if json_files:
+                latest_json = json_files[0]
+                with open(latest_json, "r+", encoding="utf-8") as f:
+                    data = json.load(f)
+                    data.update(alt_dict)
+                    f.seek(0)
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.truncate()
+                print(f"💾 Alternativas añadidas al JSON {latest_json.name}")
+    except Exception as e:
+        print(f"⚠️ Error generando alternativas automáticas: {e}")
+
+
+    # 2️⃣ Procesar documento
+    doc = Document(plantilla_path)
     replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
 
     _replace_placeholders(doc, replacements)
     _fill_tables_by_labels(doc, label_values or placeholder_map)
 
     doc.save(out_path)
+    print(f"📄 Documento exportado correctamente: {out_path}")
     return out_path

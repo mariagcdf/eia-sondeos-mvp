@@ -196,12 +196,38 @@ if "json_path" in st.session_state:
     docx_path = Path("outputs") / f"{base}.docx"
 
     if st.button("💾 Generar DOCX final"):
-        export_docx_from_placeholder_map(
-            placeholder_map=placeholders_final,
-            plantilla_path="plantilla_EIA.docx",
-            out_path=str(docx_path)
-        )
+        # 🔄 Asegurar lectura del JSON más reciente antes de nada
+        with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
+            placeholders_final = json.load(f)
 
+        # 🧠 Procesar redacción automática de placeholders ANTES de exportar
+        with st.spinner("🧠 Procesando formato y redacción técnica..."):
+            try:
+                subprocess.run(
+                    ["python", "core/sintesis/redactar_placeholder.py"],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                st.success("✅ Formato y redacción técnica completados correctamente.")
+            except subprocess.CalledProcessError as e:
+                st.warning("⚠️ Error durante la redacción automática de placeholders.")
+                st.text(e.stdout or "")
+                st.text(e.stderr or "")
+
+        # 📥 Volvemos a abrir el JSON actualizado (ya modificado por IA)
+        with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
+            placeholders_final = json.load(f)
+
+        # 📄 Exportación final a Word
+        with st.spinner("📄 Generando documento Word final..."):
+            export_docx_from_placeholder_map(
+                placeholder_map=placeholders_final,
+                plantilla_path="plantilla_EIA.docx",
+                out_path=str(docx_path)
+            )
+
+        # 💾 Botón de descarga
         with open(docx_path, "rb") as f:
             st.download_button(
                 "⬇️ Descargar DOCX generado",
@@ -209,5 +235,3 @@ if "json_path" in st.session_state:
                 file_name=f"{base}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
-else:
-    st.warning("⚠️ Sube primero el PDF antes de exportar.")

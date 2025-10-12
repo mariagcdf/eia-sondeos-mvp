@@ -1,4 +1,3 @@
-# core/build_global_json.py
 import os, json, unicodedata, re
 from typing import Dict, Any, Optional
 
@@ -140,11 +139,13 @@ def build_global_placeholders(
         "PH_Localizacion": PH_Localizacion,
         "PH_Consumo": PH_Consumo,
         "geologia": geologia,
+        # --- coordenadas ---
         "utm_x_principal": _fmt_num(_best(UTM.get("x"), C.get("x"))),
         "utm_y_principal": _fmt_num(_best(UTM.get("y"), C.get("y"))),
         "utm_huso_principal": _best(UTM.get("huso"), C.get("huso")),
         "geo_lat_principal": _best(GEO.get("lat"), C.get("lat")),
         "geo_lon_principal": _best(GEO.get("lon"), C.get("lon")),
+        # --- datos generales ---
         "municipio": _best(L.get("municipio")),
         "provincia": _best(L.get("provincia")),
         "profundidad": _fmt_num(_best(P.get("profundidad"), P.get("profundidad_proyectada_m"))),
@@ -153,33 +154,25 @@ def build_global_placeholders(
         "caudal_max_instantaneo_l_s": _fmt_num(P.get("caudal_max_instantaneo_l_s")),
         "instalacion_electrica": _best(P.get("instalacion_electrica")),
         "potencia_bombeo_kw": _fmt_num(P.get("potencia_bombeo_kw")),
+        # --- avisos ---
         "aviso_existente": (
             "⚠ Se ha detectado un SONDEO EXISTENTE en el documento. "
             "Recuerda copiar manualmente la parte referida al sondeo existente."
             if FLAGS.get("hay_sondeo_existente") else ""
         ),
+        # --- CLAVES DE ALTERNATIVAS ---
+        "PH_Alternativas_Desc": "",
+        "PH_Alternativas_Val": "",
+        "PH_Alternativas_Just": "",
     }
 
     # 7) Aplanado completo para depuración
     flat_all = _flatten(merged)
 
-    # 8) LIMPIEZA FINAL — eliminamos claves antiguas o redundantes
-    eliminar = [k for k in list(placeholders.keys())
-                if k in ("PH_situacion", "tabla_coordenadas")
-                or k.startswith("localizacion.")]
-    for k in eliminar:
-        placeholders.pop(k, None)
-
-    flat_all = {k: v for k, v in flat_all.items()
-                if k not in ("PH_situacion", "tabla_coordenadas")
-                and not k.startswith("localizacion.")}
-
-    # 9) Guardado limpio
+    # 8) Guardado limpio
     if save_to:
         os.makedirs(os.path.dirname(save_to), exist_ok=True) if os.path.dirname(save_to) else None
-        clean_out = {k: v for k, v in {**placeholders, **flat_all}.items()
-                     if not k.startswith("localizacion.")
-                     and k not in ("PH_situacion", "tabla_coordenadas")}
+        clean_out = {**placeholders, **flat_all}
         with open(save_to, "w", encoding="utf-8") as f:
             json.dump(clean_out, f, ensure_ascii=False, indent=2)
 

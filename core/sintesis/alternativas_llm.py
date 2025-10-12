@@ -1,6 +1,8 @@
 # core/sintesis/alternativas_llm.py
 import json
+
 from core.extraccion.llm_utils import get_client
+
 
 def redactar_alternativas_struct(datos_min: dict,
                                  model: str = "gpt-4.1-mini",
@@ -49,7 +51,7 @@ CONTENIDO:
 - "just": 3.3 Justificación de la alternativa elegida (sondeo), 6-10 líneas, centrada en el USO PREVISTO y la viabilidad técnico-ambiental.
 
 Estilo: español (España), formal, técnico-administrativo, sin florituras ni cifras inventadas, teniendo muy en cuenta el dato que has obtenido sobre el uso previsto para el agua extraida.
-No escribas nada fuera del JSON.
+No escribas nada fuera del JSON. Pon saltos de parrafo reales (\n) para que se vean en Word, todos los necesarios.
 """.strip()
 
     def _safe_json(s: str) -> dict:
