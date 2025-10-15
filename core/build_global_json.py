@@ -164,6 +164,16 @@ def build_global_placeholders(
         "PH_Alternativas_Desc": "",
         "PH_Alternativas_Val": "",
         "PH_Alternativas_Just": "",
+
+        # --- BLOQUE MEDIO AMBIENTAL VACÍO (IA) --
+            "4.3_Medio_biotico": "",
+            "4.4_Medio_perceptual": "",
+            "4.5_Medio_socioeconomico": "",
+        
+        #---- BLOQUE DE USOS ACTUALES VACÍO (IA) ---
+            "PH_usos_actuales": "",
+            "captura_usos_actuales": ""
+
     }
 
     # 7) Aplanado completo para depuración

@@ -1,34 +1,103 @@
 # app.py
 import os
+import sys
 from pathlib import Path
 from datetime import datetime
 import streamlit as st
 from dotenv import load_dotenv
 import json
 import subprocess
+from subprocess import Popen, PIPE, STDOUT
+import time
+from typing import Optional
 
+# Raíz del proyecto
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+# --- imports del proyecto ---
 from core.extraccion.regex_extract import regex_extract_min_fields
 from core.build_global_json import build_global_placeholders
 from core.export_docx_template import export_docx_from_placeholder_map
 from core.extraccion.pdf_reader import leer_pdf_texto_completo
 from core.sintesis.instalacion_electrica import redactar_instalacion_llm
 
-
 # ========================
 # CONFIGURACIÓN INICIAL
 # ========================
-env_path = Path(__file__).resolve().parent / ".env"
+env_path = PROJECT_ROOT / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
-st.set_page_config(
-    page_title="EIA (Sondeo nuevo)",
-    page_icon="🧭",
-    layout="centered"
-)
-
+st.set_page_config(page_title="EIA (Sondeo nuevo)", page_icon="🧭", layout="centered")
 st.title("🧭 Generador de EIA — Sondeo nuevo")
-st.caption("Flujo controlado: subir PDF → elegir tipo de instalación → comprobar Red Natura → exportar DOCX")
+st.caption("Flujo: subir PDF → extracción/redacción → Red Natura 2000 → medio biótico → exportar DOCX")
 
+# ========================
+# HELPERS
+# ========================
+def run_script_streaming(cmd: list[str], ui_title: str, height: int = 240) -> str:
+    """Ejecuta un script mostrando logs en vivo en Streamlit."""
+    log_placeholder = st.empty()
+    acc = []
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+    log_placeholder.markdown(f"**{ui_title}**")
+    with st.spinner("Ejecutando..."):
+        try:
+            proc = Popen(cmd, stdout=PIPE, stderr=STDOUT, text=True, bufsize=1, cwd=str(PROJECT_ROOT), env=env)
+            for line in iter(proc.stdout.readline, ''):
+                acc.append(line.rstrip())
+                log_placeholder.text_area(ui_title, "\n".join(acc[-60:]), height=height)
+            proc.stdout.close()
+            proc.wait()
+        except Exception as e:
+            acc.append(f"[ERROR] {e}")
+            log_placeholder.text_area(ui_title, "\n".join(acc[-60:]), height=height)
+    return "\n".join(acc)
+
+
+def load_json(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path: Path, data: dict):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def update_json_field(json_path: Path, updates: dict):
+    """Actualiza campos indicados en un JSON existente."""
+    try:
+        data = load_json(json_path)
+        data.update({k: v for k, v in updates.items() if v not in (None, "", [])})
+        save_json(json_path, data)
+        st.info(f"🗂️ JSON actualizado: {', '.join(updates.keys())}")
+    except Exception as e:
+        st.error(f"❌ Error actualizando JSON: {e}")
+
+
+def comprobar_red_natura(json_path: Path) -> bool:
+    """Ejecuta la comprobación Red Natura y devuelve True/False."""
+    cmd = [sys.executable, "-u", "core/export_info_red_natura.py", str(json_path)]
+    run_script_streaming(cmd, ui_title="🧩 Log Red Natura", height=240)
+    data = load_json(json_path)
+    estado = (data.get("estado_red_natura") or "").lower()
+    return (estado == "en_red_natura") or bool(data.get("red_natura"))
+
+
+def find_script(*paths: str) -> str:
+    """Busca el primer script existente entre varias rutas posibles."""
+    for p in paths:
+        candidate = Path(p)
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError(f"No se encontró ninguno de los scripts: {paths}")
+
+def get_latest_json(output_dir: str = "outputs") -> Optional[Path]:
+    """Devuelve el JSON más reciente en outputs/."""
+    out_dir = Path(output_dir)
+    json_files = sorted(out_dir.glob("placeholders_*.json"), key=os.path.getmtime, reverse=True)
+    return json_files[0] if json_files else None
 
 # ========================
 # SUBIR PDF
@@ -44,7 +113,7 @@ if pdf and "json_path" not in st.session_state:
         out_dir.mkdir(exist_ok=True)
         json_path = out_dir / f"placeholders_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
-        placeholders = build_global_placeholders(
+        build_global_placeholders(
             texto_relevante=texto_completo,
             texto_completo_pdf=texto_completo,
             datos_regex_min=datos_regex,
@@ -56,16 +125,18 @@ if pdf and "json_path" not in st.session_state:
 
         st.session_state["json_path"] = str(json_path)
         st.session_state["pdf_cargado"] = True
+        st.session_state["rn_done"] = False
 
 elif "json_path" in st.session_state:
     st.info(f"📄 Archivo ya procesado: {Path(st.session_state['json_path']).name}")
-
 else:
     st.stop()
 
+json_path = Path(st.session_state["json_path"])
+
 
 # ========================
-# SELECCIÓN DE TIPO ELÉCTRICO
+# ⚡ INSTALACIÓN ELÉCTRICA
 # ========================
 st.markdown("---")
 st.subheader("⚡ Tipo de instalación eléctrica")
@@ -83,103 +154,103 @@ with col2:
     if st.button("☀️ Instalación fotovoltaica"):
         seleccion = "fotovoltaica"
 
-# Si se ha pulsado uno de los dos botones
 if seleccion:
-    json_path = Path(st.session_state["json_path"])
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
+    data = load_json(json_path)
     tipo_anterior = st.session_state.get("ultimo_tipo")
 
-    # Solo regenera si ha cambiado
     if tipo_anterior != seleccion:
         with st.spinner(f"⚙️ Generando texto técnico para instalación {seleccion}..."):
             nuevo_texto = redactar_instalacion_llm(data, tipo=seleccion)
-            data["instalacion_electrica"] = nuevo_texto
-
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
+            update_json_field(json_path, {"instalacion_electrica": nuevo_texto})
             st.session_state["ultimo_tipo"] = seleccion
-
         st.success(f"✅ Texto actualizado: instalación {seleccion}.")
     else:
         st.info("ℹ️ Ya está generada esta opción.")
 
-    # Vista previa del texto generado
-    texto_actual = data.get("instalacion_electrica", "")
+    texto_actual = load_json(json_path).get("instalacion_electrica", "")
     if texto_actual:
         st.text_area("Vista previa del texto generado:", texto_actual, height=150)
 
+
+
 # ========================
-# 🌿 COMPROBAR RED NATURA 2000
+# 🌿 COMPROBACIÓN AMBIENTAL
 # ========================
+st.markdown("---")
+st.subheader("🌿 Comprobación ambiental (Red Natura 2000)")
 
-def comprobar_red_natura(json_path: Path) -> bool:
-    """
-    Llama al script export_info_red_natura.py para verificar si las coordenadas
-    del proyecto están dentro de un espacio Red Natura 2000.
-    Devuelve True si hay coincidencia, False en caso contrario.
-    """
-    try:
-        result = subprocess.run(
-            ["python", "core/sintesis/export_info_red_natura.py", str(json_path)],
-            capture_output=True, text=True, timeout=120
-        )
+if st.button("🔎 Comprobar Red Natura y generar medio biótico si procede"):
+    with st.spinner("Consultando visor y actualizando JSON…"):
+        dentro = comprobar_red_natura(json_path)
 
-        # Mostrar salida de depuración
-        st.text_area("🧩 Log Red Natura:", result.stdout, height=150)
+    if dentro:
+        st.success("✅ Dentro de Red Natura 2000.")
+    else:
+        st.warning("⚠️ Fuera de Red Natura 2000. Generando medio biótico…")
+        try:
+            run_script_streaming(
+                [sys.executable, "-u", "core/sintesis/medio_biotico_no_red_natura.py", str(json_path)],
+                ui_title="🪶 Log medio biótico (en vivo)",
+                height=220
+            )
+            st.success("🪶 Medio biótico/perceptual/socioeconómico generado.")
+        except Exception as e:
+            st.error(f"Error generando medio biótico: {e}")
 
-        if "✅" in result.stdout or "DENTRO" in result.stdout.upper():
-            return True
-        return False
-    except Exception as e:
-        st.warning(f"⚠️ Error al comprobar Red Natura: {e}")
-        return False
+    data_actual = load_json(json_path)
+    update_json_field(json_path, {
+        "4.3_Medio_biotico": data_actual.get("4.3_Medio_biotico", ""),
+        "4.4_Medio_perceptual": data_actual.get("4.4_Medio_perceptual", ""),
+        "4.5_Medio_socioeconomico": data_actual.get("4.5_Medio_socioeconomico", "")
+    })
+
+    if any(data_actual.values()):
+        st.text_area("🌱 4.3 Medio biótico", data_actual.get("4.3_Medio_biotico", ""), height=160)
+        st.text_area("👁️ 4.4 Medio perceptual", data_actual.get("4.4_Medio_perceptual", ""), height=130)
+        st.text_area("👥 4.5 Medio socioeconómico", data_actual.get("4.5_Medio_socioeconomico", ""), height=140)
 
 
-if "json_path" in st.session_state and "ultimo_tipo" in st.session_state:
-    json_path = Path(st.session_state["json_path"])
+# ========================
+# 🌾 USOS ACTUALES DEL TERRENO
+# ========================
+st.markdown("## 🌾 Usos actuales del terreno")
 
-    st.markdown("---")
-    st.subheader("🌿 Comprobación ambiental")
+if json_path.exists():
+    st.write(f"📄 Archivo en uso: `{json_path.name}`")
 
-    if st.button("🔎 Comprobar si el proyecto está dentro de Red Natura 2000"):
-        with st.spinner("🌍 Analizando coordenadas y consultando Red Natura 2000..."):
-            en_red_natura = comprobar_red_natura(json_path)
+    boton_usos = st.button("🧠 Generar 'Usos actuales' automáticamente")
 
-            # Cargar datos actuales
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+    if boton_usos:
+        with st.spinner("Generando texto y captura desde visor CH Duero..."):
+            script_usos_path = find_script("core/sintesis/usos_actuales_llm.py")
+            cmd = [sys.executable, "-u", script_usos_path, str(json_path)]
+            run_script_streaming(
+                cmd,
+                ui_title="🗺️ Proceso de generación de 'Usos actuales del terreno'",
+                height=300
+            )
 
-            if en_red_natura:
-                st.success("✅ El proyecto se encuentra dentro de un espacio Red Natura 2000.")
-                data["red_natura"] = True
-            else:
-                st.warning("⚠️ El proyecto NO está dentro de Red Natura 2000.")
-                data["red_natura"] = False
-                st.info("🪶 Generando texto alternativo de medio biótico...")
+        # 🔄 Recargar JSON actualizado tras la ejecución
+        data_prev = load_json(json_path)
+        update_json_field(json_path, {
+            "usos_actuales_llm": data_prev.get("usos_actuales_llm", ""),
+            "captura_usos_actuales": data_prev.get("captura_usos_actuales", "")
+        })
 
-                try:
-                    subprocess.run(
-                        ["python", "core/sintesis/medio_biotico_no_red_natura.py", str(json_path)],
-                        check=True
-                    )
-                    st.success("🪶 Texto alternativo de medio biótico generado correctamente.")
-                except subprocess.CalledProcessError as e:
-                    st.error(f"❌ Error al generar texto alternativo: {e}")
 
-            # Guardar estado actualizado en el JSON
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+        # 👁️ Mostrar vista previa inmediatamente
+        txt_usos = data_prev.get("usos_actuales_llm", "")
+        img_usos = data_prev.get("captura_usos_actuales", "")
+        if txt_usos:
+            st.text_area("📝 Texto generado:", txt_usos, height=160)
+        if img_usos and Path(img_usos).exists():
+            st.image(str(img_usos), caption="🛰️ Captura CH Duero — Usos actuales del terreno")
+        else:
+            st.warning("No se encontró la imagen de captura (verifica ejecución del script).")
+else:
+    st.warning("⚠️ No se encontró el archivo JSON cargado.")
 
-    # 👀 Vista previa del texto de medio biótico si existe
-    with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
-        data_actual = json.load(f)
 
-    texto_medio_biotico = data_actual.get("medio_biotico", "")
-    if texto_medio_biotico:
-        st.text_area("🌱 Vista previa del texto de medio biótico:", texto_medio_biotico, height=250)
 
 # ========================
 # EXPORTAR DOCX FINAL
@@ -187,51 +258,48 @@ if "json_path" in st.session_state and "ultimo_tipo" in st.session_state:
 st.markdown("---")
 st.subheader("🧾 Exportar documento final")
 
-if "json_path" in st.session_state:
-    with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
-        placeholders_final = json.load(f)
+placeholders_final = load_json(json_path)
+hoy = datetime.now().strftime("%Y%m%d")
+base = f"EIA_simplificada_{hoy}"
+docx_path = Path("outputs") / f"{base}.docx"
 
-    hoy = datetime.now().strftime("%Y%m%d")
-    base = f"EIA_simplificada_{hoy}"
-    docx_path = Path("outputs") / f"{base}.docx"
+# Botón estilizado ancho completo
+st.markdown(
+    """
+    <style>
+    div.stButton > button:first-child { width: 100%; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-    if st.button("💾 Generar DOCX final"):
-        # 🔄 Asegurar lectura del JSON más reciente antes de nada
-        with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
-            placeholders_final = json.load(f)
-
-        # 🧠 Procesar redacción automática de placeholders ANTES de exportar
-        with st.spinner("🧠 Procesando formato y redacción técnica..."):
-            try:
-                subprocess.run(
-                    ["python", "core/sintesis/redactar_placeholder.py"],
-                    check=True,
-                    capture_output=True,
-                    text=True
-                )
-                st.success("✅ Formato y redacción técnica completados correctamente.")
-            except subprocess.CalledProcessError as e:
-                st.warning("⚠️ Error durante la redacción automática de placeholders.")
-                st.text(e.stdout or "")
-                st.text(e.stderr or "")
-
-        # 📥 Volvemos a abrir el JSON actualizado (ya modificado por IA)
-        with open(st.session_state["json_path"], "r", encoding="utf-8") as f:
-            placeholders_final = json.load(f)
-
-        # 📄 Exportación final a Word
-        with st.spinner("📄 Generando documento Word final..."):
-            export_docx_from_placeholder_map(
-                placeholder_map=placeholders_final,
-                plantilla_path="plantilla_EIA.docx",
-                out_path=str(docx_path)
+if st.button("💾 Generar DOCX final"):
+    with st.spinner("🧠 Preparando y generando el documento..."):
+        try:
+            res = subprocess.run(
+                [sys.executable, "-u", "core/sintesis/redactar_placeholder.py"],
+                capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=300
             )
+            if res.returncode == 0:
+                st.success("✅ Redacción técnica completada.")
+            else:
+                st.warning("⚠️ Hubo avisos en la redacción. Revisa el log si es necesario.")
+        except Exception as e:
+            st.error(f"❌ Error durante la redacción automática: {e}")
 
-        # 💾 Botón de descarga
-        with open(docx_path, "rb") as f:
-            st.download_button(
-                "⬇️ Descargar DOCX generado",
-                data=f,
-                file_name=f"{base}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
+    placeholders_final = load_json(json_path)
+    with st.spinner("📄 Generando documento Word final..."):
+        export_docx_from_placeholder_map(
+            placeholder_map=placeholders_final,
+            plantilla_path="plantilla_EIA.docx",
+            out_path=str(docx_path)
+        )
+
+    st.success("📄 Documento exportado correctamente.")
+    with open(docx_path, "rb") as f:
+        st.download_button(
+            "⬇️ Descargar DOCX generado",
+            data=f,
+            file_name=f"{base}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )

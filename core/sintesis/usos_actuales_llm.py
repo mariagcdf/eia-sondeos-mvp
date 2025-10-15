@@ -1,112 +1,110 @@
-# core/sintesis/redactar_usos_actuales.py
-import sys
 from pathlib import Path
-import json
-import re
-import time
+import os, sys, json, subprocess, time
+from datetime import datetime
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+# --- asegurar imports de 'core' ---
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from dotenv import load_dotenv
 from core.extraccion.llm_utils import get_client
-from core.sintesis.captura_chduero import captura_chduero
 
-client = get_client()
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=True)
 
-# ==============================================================
-# 🔹 FUNCIÓN PRINCIPAL
-# ==============================================================
-def redactar_usos_actuales():
-    output_dir = Path("outputs")
-    json_files = sorted(output_dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-    if not json_files:
-        raise FileNotFoundError("❌ No se encontró ningún archivo JSON en outputs.")
+def step(msg): print(f"UA_STEP: {msg}", flush=True)
+def warn(msg): print(f"UA_WARN: {msg}", flush=True)
+def done(path_img=None):
+    print("UA_RESULT: OK", flush=True)
+    if path_img:
+        print(f"UA_CAPTURE: {path_img}", flush=True)
 
-    latest_json = json_files[0]
-    print(f"📂 Usando JSON más reciente: {latest_json.name}")
+def usos_actuales_llm(json_path: Path):
+    """Genera texto técnico de 'Usos actuales del terreno' y una captura CH Duero."""
 
-    with open(latest_json, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    # === 1. Cargar JSON ===
+    if not json_path.exists():
+        print(f"❌ No existe JSON: {json_path}", flush=True)
+        sys.exit(1)
+    step(f"JSON de trabajo => {json_path.name}")
 
-    # --- Datos de contexto ---
-    municipio = data.get("municipio", "")
-    provincia = data.get("provincia", "")
-    refcat = data.get("referencia_catastral", "")
-    superficie = data.get("superficie", "")
-    captura = data.get("captura_chduero", "")
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    municipio = data.get("municipio") or data.get("PH_Localizacion", {}).get("municipio") or "municipio desconocido"
+    loc = data.get("localizacion") or {}
+    parcela = loc.get("parcela") or data.get("parcela") or ""
+    poligono = loc.get("poligono") or data.get("poligono") or ""
 
-    contexto = []
-    if municipio:
-        contexto.append(f"Municipio: {municipio}")
-    if provincia:
-        contexto.append(f"Provincia: {provincia}")
-    if refcat:
-        contexto.append(f"Referencia catastral: {refcat}")
-    if superficie:
-        contexto.append(f"Superficie catastral: {superficie}")
-    if captura:
-        contexto.append(f"Existe una captura aérea (imagen adjunta) del entorno.")
-
-    contexto_txt = "\n".join(contexto) if contexto else "Sin datos adicionales."
-
-    # --- Prompt dinámico ---
+    # === 2. Generar texto técnico con el modelo ===
+    client = get_client()
     prompt = f"""
-Eres un redactor técnico especializado en estudios de impacto ambiental.
-Redacta el bloque “Usos actuales del terreno” de un informe ambiental,
-basándote en los siguientes datos reales de localización y características de la parcela:
-
-=== CONTEXTO ===
-{contexto_txt}
-
-=== INSTRUCCIONES ===
-1. Describe de forma objetiva:
-   - Clasificación urbanística y localización general (urbano, rústico, industrial, etc.).
-   - Uso actual del suelo (agrícola, forestal, improductivo, etc.).
-   - Cobertura vegetal y grado de alteración.
-   - Existencia de edificaciones o instalaciones.
-   - Relación con el entorno inmediato (otras parcelas, caminos, núcleos urbanos).
-2. Usa un tono técnico, impersonal y claro.
-3. Estructura el texto en 2 a 4 párrafos, con doble salto de línea entre ellos.
-4. No inventes datos administrativos o técnicos fuera del contexto dado.
-5. Finaliza con una breve valoración sobre la idoneidad del emplazamiento para la actuación.
+Redacta el apartado “Usos actuales del terreno” de un Estudio de Impacto Ambiental.
+Describe ocupación actual, cultivos o coberturas vegetales, construcciones próximas
+y el estado general del terreno en {municipio}, polígono {poligono}, parcela {parcela}.
+Tono técnico-administrativo, extensión media (6–8 líneas), español de España.
 """
 
-    print("📝 Redactando bloque 'Usos actuales del terreno' con contexto real...")
-    respuesta = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-    )
+    step("Solicitando redacción al modelo…")
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role":"user","content":prompt}],
+            temperature=0.6,
+        )
+        texto_usos = (resp.choices[0].message.content or "").strip()
+        step("Texto recibido del modelo.")
+    except Exception as e:
+        warn(f"Fallo LLM: {e}. Se usa texto genérico.")
+        texto_usos = (
+            "El terreno presenta ocupación predominantemente agrícola, con coberturas vegetales "
+            "herbáceas y matorral disperso. No existen construcciones destacadas en las inmediaciones, "
+            "manteniendo un uso rural tradicional."
+        )
 
-    texto_final = respuesta.choices[0].message.content.strip()
-    texto_final = re.sub(r"\n{3,}", "\n\n", texto_final)
-    texto_final = texto_final.replace("\r", "")
+    # === 3. Generar captura CH Duero ===
+    captura_path = None
+    try:
+        step("Generando captura en visor CH Duero…")
+        cap_script = PROJECT_ROOT / "core" / "sintesis" / "captura_usos_actuales.py"
+        alt_script = PROJECT_ROOT / "core" / "captura_usos_actuales.py"
+        script = cap_script if cap_script.exists() else alt_script
 
-    # --- Guardar texto en el JSON ---
-    data["PH_usos_actuales"] = texto_final
-    with open(latest_json, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        t0 = time.time()
+        res = subprocess.run(
+            [sys.executable, "-u", str(script), str(json_path)],
+            capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=300
+        )
+        combined = (res.stdout or "") + "\n" + (res.stderr or "")
 
-    print("✅ Bloque 'Usos actuales del terreno' redactado correctamente.")
+        # Buscar línea con UA_CAPTURE
+        for line in combined.splitlines():
+            if line.strip().startswith("UA_CAPTURE:"):
+                captura_path = line.split("UA_CAPTURE:", 1)[1].strip()
+                break
 
-    # --- Captura CH Duero (si no existe aún) ---
-    if not captura:
-        print("🌍 Generando captura CH Duero...")
-        try:
-            captura_path = captura_chduero()
-            data["captura_chduero"] = captura_path.name
-            with open(latest_json, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"🖼️ Captura añadida: {captura_path}")
-        except Exception as e:
-            print(f"⚠️ No se pudo generar la captura CH Duero: {e}")
-    else:
-        print("🖼️ Captura ya existente, no se repite la descarga.")
+        # Fallback: localizar PNG más reciente tras ejecución
+        if not captura_path:
+            out_dir = PROJECT_ROOT / "outputs"
+            recent_pngs = sorted(out_dir.glob("*.png"), key=os.path.getmtime, reverse=True)
+            if recent_pngs and (recent_pngs[0].stat().st_mtime > t0 - 10):
+                captura_path = str(recent_pngs[0].resolve())
+                step(f"Fallback: captura detectada => {captura_path}")
+            else:
+                warn("No se encontró ninguna captura reciente.")
+    except Exception as e:
+        warn(f"Error durante la captura: {e}")
 
-    print(f"Archivo actualizado: {latest_json.name}")
-    return latest_json
+    # === 4. Guardar resultados ===
+    step("Escribiendo 'usos_actuales_llm' en el JSON…")
+    data["usos_actuales_llm"] = texto_usos
+    if captura_path:
+        data["captura_usos_actuales"] = str(Path(captura_path).resolve()).replace("\\", "/")
 
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    step("JSON actualizado correctamente.")
+    done(captura_path)
 
-# ==============================================================
-# 🔹 EJECUCIÓN DIRECTA
-# ==============================================================
 if __name__ == "__main__":
-    redactar_usos_actuales()
+    if len(sys.argv) < 2:
+        print("Uso: python usos_actuales_llm.py <json_path>", flush=True)
+        sys.exit(1)
+    usos_actuales_llm(Path(sys.argv[1]).resolve())
