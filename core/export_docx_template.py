@@ -87,35 +87,46 @@ def _write_with_paragraphs(para: Paragraph, text: str):
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
     Reemplaza todos los {{placeholders}}:
-    - Si el párrafo contiene SOLO el marcador → reemplaza con párrafos nuevos (manteniendo formato).
+    - Si el párrafo contiene SOLO el marcador → reemplaza el contenido completo.
     - Si hay texto antes o después → reemplazo inline conservando estilo y sangría.
+    - Si el párrafo pertenece al encabezado (header), los reemplazos se convierten a mayúsculas reales.
     """
     for para in list(_iter_paragraphs(doc)):
         text = _clean(_para_text(para))
         if "{{" not in text:
             continue
 
+        # 🔹 Detectar si el párrafo pertenece al encabezado del documento
+        in_header = False
+        try:
+            parent = para._element.getparent()
+            while parent is not None:
+                if parent.tag.endswith("hdr"):  # <w:hdr> → sección de encabezado
+                    in_header = True
+                    break
+                parent = parent.getparent()
+        except Exception:
+            pass
+
         for key, val in (replacements or {}).items():
             pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
+            replacement_text = str(val or "")
 
+            # 🔹 Si el párrafo solo contiene el marcador
             if pattern.fullmatch(text.strip()):
-                _write_with_paragraphs(para, val)
+                if in_header:
+                    replacement_text = replacement_text.upper()
+                _write_with_paragraphs(para, replacement_text)
                 break
+
+            # 🔹 Si el marcador está dentro de una línea de texto
             elif pattern.search(text):
-                fmt = para.paragraph_format
-                style = para.style
-                alignment = para.alignment
-
-                new_text = pattern.sub(str(val or ""), text)
-                _clear_paragraph_keep_format(para)
-                para.add_run(new_text)
-
-                para.paragraph_format.left_indent = fmt.left_indent
-                para.paragraph_format.first_line_indent = fmt.first_line_indent
-                if hasattr(fmt, "hanging_indent"):
-                    para.paragraph_format.hanging_indent = fmt.hanging_indent
-                para.alignment = alignment
-                para.style = style
+                for run in para.runs:
+                    if pattern.search(run.text):
+                        new_text = pattern.sub(replacement_text, run.text)
+                        if in_header:
+                            new_text = new_text.upper()  # Forzar mayúsculas solo en encabezado
+                        run.text = new_text
                 break
 
 
@@ -154,9 +165,9 @@ def _iter_paragraphs(doc: Document):
 
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
-    Reemplaza todos los {{placeholders}}:
-    - Si el párrafo contiene SOLO el marcador → reemplaza con párrafos nuevos (manteniendo formato).
-    - Si hay texto antes o después → reemplazo inline conservando estilo y sangría.
+    Reemplaza todos los {{placeholders}} en runs de texto sin alterar formato.
+    - Si el párrafo contiene SOLO el marcador → reemplaza el párrafo entero con nuevos saltos.
+    - Si está dentro de una frase o encabezado → reemplazo inline dentro del run.
     """
     for para in list(_iter_paragraphs(doc)):
         text = _clean(_para_text(para))
@@ -166,25 +177,17 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
         for key, val in (replacements or {}).items():
             pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
 
+            # Si el párrafo solo contiene el marcador
             if pattern.fullmatch(text.strip()):
                 _write_with_paragraphs(para, val)
                 break
-            elif pattern.search(text):
-                fmt = para.paragraph_format
-                style = para.style
-                alignment = para.alignment
 
-                new_text = pattern.sub(str(val or ""), text)
-                _clear_paragraph_keep_format(para)
-                para.add_run(new_text)
+            # Si el marcador está dentro de una línea de texto (encabezados, frases, etc.)
+            for run in para.runs:
+                if pattern.search(run.text):
+                    run.text = pattern.sub(str(val or ""), run.text)
+            # No se limpian runs ni estilos; se actualiza en sitio
 
-                para.paragraph_format.left_indent = fmt.left_indent
-                para.paragraph_format.first_line_indent = fmt.first_line_indent
-                if hasattr(fmt, "hanging_indent"):
-                    para.paragraph_format.hanging_indent = fmt.hanging_indent
-                para.alignment = alignment
-                para.style = style
-                break
 
 # =====================
 # Relleno de tablas

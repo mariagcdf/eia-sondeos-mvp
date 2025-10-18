@@ -92,6 +92,39 @@ Uso del sondeo: {uso_sondeo}
    - Otro → redacta un texto genérico positivo.
 4. Usa saltos de párrafo dobles (\\n\\n) para formato Word.
 """
+PROMPT_CESE_SOCIAL = """
+Eres un redactor técnico ambiental especializado en Evaluaciones de Impacto Ambiental.
+Redacta el texto correspondiente al impacto social, económico y cultural en la FASE DE CESE
+de un proyecto, teniendo en cuenta el uso descrito.
+
+=== USO DEL PROYECTO ===
+{uso_sondeo}
+
+=== INSTRUCCIONES ===
+1. Redacta un párrafo formal y técnico de 4–6 líneas.
+2. Describe las consecuencias del cese de la actividad sobre la población, la economía local o los servicios.
+3. Si el cese no implica pérdida de un recurso esencial, indícalo claramente.
+4. Finaliza con el dictamen y valoración (admisible y compatible, moderado, etc.).
+5. No uses Markdown ni HTML, solo texto plano con saltos de línea válidos para Word.
+"""
+PROMPT_RESUMEN = """
+Eres un redactor técnico ambiental especializado en estudios de impacto ambiental.
+Redacta el texto del RESUMEN FINAL del estudio, adaptándolo al uso indicado a continuación.
+
+=== USO DEL PROYECTO ===
+{uso_sondeo}
+
+=== INSTRUCCIONES ===
+1. Mantén la estructura general siguiente, pero adapta el contenido técnico y social al uso concreto:
+   - Indica que no se han identificado impactos críticos.
+   - Señala que los efectos son compatibles o moderados.
+   - Explica brevemente por qué (baja entidad, duración limitada, medidas preventivas, etc.).
+   - Describe los posibles impactos en la fase de cese, adaptados al uso (por ejemplo, si el sondeo es para riego, abastecimiento, recreativo o industrial).
+   - Finaliza con una conclusión sobre la razonabilidad del proyecto y su compatibilidad ambiental.
+2. El texto debe tener entre 8 y 10 líneas, en tono formal y técnico.
+3. No uses Markdown ni HTML, solo texto plano con saltos de línea aptos para Word.
+"""
+
 
 # ==============================================================
 # 🔹 PROCESAMIENTO DE PLACEHOLDERS
@@ -119,7 +152,16 @@ def procesar_json():
             messages=[{"role": "user", "content": prompt}],
         )
         texto_final = respuesta.choices[0].message.content.strip()
-        texto_final = re.sub(r"\n{3,}", "\n\n", texto_final).replace("\r", "")
+        texto_final = (
+        texto_final
+        .replace("\\t", "\t")    # 🔹 Convierte las secuencias "\t" literales en tabuladores reales
+        .replace("•", "·")
+        .replace("x", "x")
+        .replace("l/", "L/")
+        .replace("m3", "m³")
+        .strip()
+        )
+
         data["PH_Consumo"] = texto_final
         print("PH_Consumo formateado correctamente.")
 
@@ -168,13 +210,73 @@ def procesar_json():
         print("No se encontró ningún campo de uso en el JSON. Se omite impacto_poblacion.")
 
 
+    # === NUEVO: impacto_cese_social ===
+    uso_sondeo = (
+        data.get("parametros.detalles_de_uso") or
+        data.get("parametros.uso_previsto") or
+        (data.get("parametros", {}).get("detalles_de_uso") if isinstance(data.get("parametros"), dict) else "") or
+        (data.get("parametros", {}).get("uso_previsto") if isinstance(data.get("parametros"), dict) else "") or
+        ""
+    ).strip()
+
+    if uso_sondeo:
+        print(f"Generando texto de impacto social en fase de cese (uso: {uso_sondeo})...")
+
+        prompt = PROMPT_CESE_SOCIAL.format(uso_sondeo=uso_sondeo)
+
+        respuesta = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        texto_final = respuesta.choices[0].message.content.strip()
+        texto_final = re.sub(r"\n{3,}", "\n\n", texto_final).replace("\r", "")
+
+        data["impacto_cese_social"] = texto_final
+        print("impacto_cese_social generado correctamente.")
+    else:
+        print("No se encontró ningún campo de uso en el JSON. Se omite impacto_cese_social.")
+
+
+        # === Guardar JSON actualizado ===
+        with open(latest_json, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        print("\nJSON actualizado con formato técnico listo para exportar a Word.\n")
+        return latest_json
+
+    # === NUEVO: resumen_final ===
+    uso_sondeo = (
+        data.get("parametros.detalles_de_uso") or
+        data.get("parametros.uso_previsto") or
+        (data.get("parametros", {}).get("detalles_de_uso") if isinstance(data.get("parametros"), dict) else "") or
+        (data.get("parametros", {}).get("uso_previsto") if isinstance(data.get("parametros"), dict) else "") or
+        ""
+    ).strip()
+
+    if uso_sondeo:
+        print(f"Generando resumen final adaptado al uso (uso: {uso_sondeo})...")
+
+        prompt = PROMPT_RESUMEN.format(uso_sondeo=uso_sondeo)
+
+        respuesta = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        texto_final = respuesta.choices[0].message.content.strip()
+        texto_final = re.sub(r"\n{3,}", "\n\n", texto_final).replace("\r", "")
+
+        data["resumen_final"] = texto_final
+        print("resumen_final generado correctamente.")
+    else:
+        print("No se encontró ningún campo de uso en el JSON. Se omite resumen_final.")
+
     # === Guardar JSON actualizado ===
     with open(latest_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
     print("\nJSON actualizado con formato técnico listo para exportar a Word.\n")
     return latest_json
-
 
 # ==============================================================
 # 🔹 EJECUCIÓN DIRECTA
