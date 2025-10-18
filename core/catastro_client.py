@@ -1,115 +1,179 @@
-# -*- coding: utf-8 -*-
-"""
-Cliente Catastro por coordenadas (Consulta_CPMRC).
-Devuelve datos básicos (ref catastral, municipio, tipo de suelo, uso, superficie…).
-"""
-
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
-import requests
-import xml.etree.ElementTree as ET
-
-CAT_URL = (
-    "https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/"
-    "OVCCoordenadas.asmx/Consulta_CPMRC"
-)
-DEFAULT_SRS = "EPSG:25830"  # UTM ETRS89 península
-TIMEOUT = 12
-HEADERS = {"User-Agent": "EIA-Extractor/1.0 (+uso académico)"}
+import sys, time, json
+from pathlib import Path
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support import expected_conditions as EC
 
 
-@dataclass
-class CatastroData:
-    ref_catastral: Optional[str] = None
-    municipio: Optional[str] = None
-    provincia: Optional[str] = None
-    via: Optional[str] = None
-    numero: Optional[str] = None
-    tipo_suelo: Optional[str] = None   # Urbano / Rústico…
-    uso: Optional[str] = None          # Industrial / Residencial / Agrícola…
-    superficie_m2: Optional[float] = None
-    raw: Optional[Dict[str, Any]] = None
+def step(msg): print(f"CATA_STEP: {msg}", flush=True)
+def warn(msg): print(f"CATA_WARN: {msg}", flush=True)
+def done(msg): print(f"CATA_DONE: {msg}", flush=True)
 
 
-def _clean(s: Optional[str]) -> Optional[str]:
-    return s.strip() if isinstance(s, str) and s.strip() else None
-
-
-def _first_text(elem, paths, ns):
-    for p in paths:
-        n = elem.find(p, ns) if ns else elem.find(p)
-        if n is not None and n.text and n.text.strip():
-            return n.text.strip()
-    return None
-
-
-def _m2_to_areas(superficie_m2: Optional[float]) -> Tuple[Optional[int], Optional[int]]:
-    if superficie_m2 is None:
-        return None, None
-    a = int(superficie_m2 // 100)
-    c = int(round(superficie_m2 - a * 100))
-    return a, c
-
-
-def formato_superficie(superficie_m2: Optional[float]) -> Optional[str]:
-    if not superficie_m2:
-        return None
-    a, c = _m2_to_areas(superficie_m2)
-    if a is None:
-        return f"{int(round(superficie_m2))} m²"
-    return f"{int(round(superficie_m2))} m² ({a:02d} áreas y {c:02d} centiáreas)"
-
-
-def consulta_por_coordenadas(x: float, y: float, srs: str = DEFAULT_SRS) -> CatastroData:
-    params = {"SRS": srs, "Coordenada_X": str(x), "Coordenada_Y": str(y)}
+def accept_cookies(driver):
+    step("Buscando banner de cookies…")
     try:
-        r = requests.get(CAT_URL, params=params, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-    except requests.RequestException as e:
-        return CatastroData(raw={"error": f"HTTP {e}", "params": params})
+        btn = WebDriverWait(driver, 8).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "a.cc-btn.cc-allow"))
+        )
+        driver.execute_script("arguments[0].click();", btn)
+        step("Cookies aceptadas.")
+        time.sleep(1)
+    except Exception:
+        warn("No se encontró banner de cookies, continuando…")
 
-    try:
-        root = ET.fromstring(r.text)
-    except ET.ParseError as e:
-        return CatastroData(raw={"error": f"XML {e}", "text": r.text[:1000]})
 
-    ns = {"ns": root.tag.split('}')[0].strip('{')} if '}' in root.tag else {}
-
-    candidatos = []
-    for path in [".//pc", ".//ns:pc", ".//coordenadas//pc", ".//ns:coordenadas//ns:pc"]:
-        candidatos += (root.findall(path, ns) if ns else root.findall(path))
-
-    if not candidatos:
-        lerr = _first_text(root, [".//lerr", ".//ns:lerr"], ns)
-        return CatastroData(raw={"warning": "Sin candidatos", "lerr": lerr, "xml": r.text[:1000]})
-
-    pc = candidatos[0]
-    pc1 = _first_text(pc, ["rc/pc1", "ns:rc/ns:pc1"], ns)
-    pc2 = _first_text(pc, ["rc/pc2", "ns:rc/ns:pc2"], ns)
-    ref = f"{pc1}{pc2}" if pc1 and pc2 else (pc1 or pc2)
-
-    municipio = _first_text(pc, ["ldtmun", "nm", "muni", "municipio", "nae"], ns)
-    provincia = _first_text(pc, ["ldtpro", "prov", "provincia"], ns)
-    via = _first_text(pc, ["nv", "via", "tv", "nvia"], ns)
-    numero = _first_text(pc, ["pnp", "numero", "hn"], ns)
-    tipo = _first_text(pc, ["ldt", "clase", "ts", "tipo_suelo"], ns)
-    uso = _first_text(pc, ["luso", "uso", "destino"], ns)
-    s_txt = _first_text(pc, ["sfc", "superficie", "sfcpar", "sups"], ns)
-    s_m2 = None
-    if s_txt:
-        try:
-            s_m2 = float(str(s_txt).replace(",", "."))
-        except Exception:
-            s_m2 = None
-
-    return CatastroData(
-        ref_catastral=_clean(ref),
-        municipio=_clean(municipio),
-        provincia=_clean(provincia),
-        via=_clean(via),
-        numero=_clean(numero),
-        tipo_suelo=_clean(tipo),
-        uso=_clean(uso),
-        superficie_m2=s_m2,
-        raw={"xml": r.text[:1200]},
+def open_coords_panel(driver):
+    step("Abriendo panel de coordenadas…")
+    btn_coord = WebDriverWait(driver, 20).until(
+        EC.element_to_be_clickable((By.ID, "m-locator-xylocator"))
     )
+    driver.execute_script("arguments[0].click();", btn_coord)
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.ID, "m-xylocator-srs"))
+    )
+    step("Panel de coordenadas abierto correctamente.")
+
+
+def locate_coords(driver, utm_x, utm_y):
+    step("Localizando coordenadas…")
+    Select(driver.find_element(By.ID, "m-xylocator-srs")).select_by_value("EPSG:25830")
+    x_field = driver.find_element(By.ID, "UTM-X")
+    y_field = driver.find_element(By.ID, "UTM-Y")
+    x_field.clear(); y_field.clear()
+    x_field.send_keys(utm_x)
+    y_field.send_keys(utm_y)
+    driver.find_element(By.ID, "m-xylocator-loc").click()
+    step(f"Coordenadas localizadas: X={utm_x}, Y={utm_y}")
+    time.sleep(3)
+
+
+def open_backimg_panel(driver):
+    step("Abriendo panel de mapas base…")
+    btn = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "button.backimglyr-simbolo-cuadros"))
+    )
+    driver.execute_script("arguments[0].click();", btn)
+    time.sleep(2)
+    step("Panel de mapas base abierto.")
+
+
+def enable_catastro_layer(driver):
+    """Activa la capa del Catastro automáticamente."""
+    step("Activando capa Catastro…")
+    try:
+        # Buscar imagen con alt o id del Catastro
+        img = driver.find_element(
+            By.XPATH,
+            "//img[contains(@alt, 'Catastro') or contains(@src, 'catastro')]"
+        )
+        driver.execute_script("arguments[0].click();", img)
+        step("Capa Catastro activada correctamente.")
+        time.sleep(4)
+        return True
+    except Exception as e:
+        warn(f"No se pudo activar capa Catastro automáticamente: {e}")
+        return False
+
+
+def click_on_map(driver):
+    """Hace clic en el centro del mapa para abrir el pop-up catastral."""
+    step("Haciendo clic en el mapa para abrir información catastral…")
+    try:
+        map_el = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.ol-viewport"))
+        )
+        driver.execute_script("""
+            const rect = arguments[0].getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const el = document.elementFromPoint(x, y);
+            el.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+        """, map_el)
+        step("Clic en el mapa ejecutado.")
+        time.sleep(3)
+    except Exception as e:
+        warn(f"No se pudo hacer clic en el mapa: {e}")
+
+
+def extract_catastro_info(driver):
+    """Extrae el texto visible del pop-up."""
+    step("Extrayendo información visible del visor…")
+    try:
+        overlay = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.ol-overlay-container"))
+        )
+        text_blocks = overlay.find_elements(By.XPATH, ".//div")
+        texts = [t.text.strip() for t in text_blocks if t.text.strip()]
+        if texts:
+            step("Información catastral detectada:")
+            for line in texts:
+                print(f"📋 {line}")
+            return "\n".join(texts)
+        else:
+            warn("No se encontró texto en el pop-up.")
+            return ""
+    except Exception:
+        warn("No se pudo leer el pop-up.")
+        return ""
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: python catastro_client.py <json_path>", flush=True)
+        sys.exit(1)
+
+    json_path = Path(sys.argv[1]).resolve()
+    if not json_path.exists():
+        print(f"❌ No existe JSON: {json_path}", flush=True)
+        sys.exit(1)
+
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    utm_x = str(data.get("utm_x_principal", "")).replace(",", ".")
+    utm_y = str(data.get("utm_y_principal", "")).replace(",", ".")
+
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+
+    driver = webdriver.Chrome(options=chrome_options)
+    wait = WebDriverWait(driver, 40)
+
+    try:
+        step("Abriendo visor CH Duero…")
+        driver.get("https://mirame.chduero.es/chduero/viewer")
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.m-areas")))
+        time.sleep(2)
+        accept_cookies(driver)
+
+        # Localizar y activar capa
+        open_coords_panel(driver)
+        locate_coords(driver, utm_x, utm_y)
+        open_backimg_panel(driver)
+        enable_catastro_layer(driver)
+
+        # Clic para mostrar popup
+        click_on_map(driver)
+        info = extract_catastro_info(driver)
+
+        if info:
+            data["catastro_info"] = info
+            json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            done("Información catastral guardada correctamente.")
+        else:
+            warn("No se obtuvo información textual.")
+
+    except Exception as e:
+        warn(f"Error inesperado: {e}")
+        driver.save_screenshot("debug_catastro_error.png")
+
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()

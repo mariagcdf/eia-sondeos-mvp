@@ -172,6 +172,41 @@ if seleccion:
         st.text_area("Vista previa del texto generado:", texto_actual, height=150)
 
 
+# ========================
+# 🏠 INFORMACIÓN CATASTRAL
+# ========================
+st.markdown("## 🏠 Información catastral")
+
+if json_path.exists():
+    st.write(f"📄 Archivo en uso: `{json_path.name}`")
+
+    boton_catastro = st.button("🧭 Obtener información catastral automáticamente")
+
+    if boton_catastro:
+        with st.spinner("Consultando visor CH Duero y extrayendo información del Catastro..."):
+            script_catastro_path = find_script("core/sintesis/catastro_client.py")
+            cmd = [sys.executable, "-u", script_catastro_path, str(json_path)]
+            run_script_streaming(
+                cmd,
+                ui_title="🏠 Proceso de extracción de información catastral",
+                height=300
+            )
+
+        # 🔄 Recargar JSON actualizado tras la ejecución
+        data_prev = load_json(json_path)
+        update_json_field(json_path, {
+            "catastro_info": data_prev.get("catastro_info", "")
+        })
+
+        # ✅ Mensaje de confirmación
+        if data_prev.get("catastro_info"):
+            st.success("✅ Información catastral extraída y guardada correctamente.")
+        else:
+            st.warning("⚠️ No se encontró información catastral (puede que el visor no haya devuelto datos).")
+
+else:
+    st.warning("⚠️ No se encontró el archivo JSON cargado.")
+
 
 # ========================
 # 🌿 COMPROBACIÓN AMBIENTAL
@@ -230,7 +265,6 @@ if st.button("🔎 Comprobar Red Natura y generar medio biótico si procede"):
         st.text_area("👁️ 4.4 Medio perceptual", data_actual.get("4.4_Medio_perceptual", ""), height=130)
         st.text_area("👥 4.5 Medio socioeconómico", data_actual.get("4.5_Medio_socioeconomico", ""), height=140)
 
-
 # ========================
 # 🌾 USOS ACTUALES DEL TERRENO
 # ========================
@@ -258,16 +292,9 @@ if json_path.exists():
             "captura_usos_actuales": data_prev.get("captura_usos_actuales", "")
         })
 
+        # ✅ Mensaje de confirmación
+        st.success("✅ Captura guardada correctamente.")
 
-        # 👁️ Mostrar vista previa inmediatamente
-        txt_usos = data_prev.get("usos_actuales_llm", "")
-        img_usos = data_prev.get("captura_usos_actuales", "")
-        if txt_usos:
-            st.text_area("📝 Texto generado:", txt_usos, height=160)
-        if img_usos and Path(img_usos).exists():
-            st.image(str(img_usos), caption="🛰️ Captura CH Duero — Usos actuales del terreno")
-        else:
-            st.warning("No se encontró la imagen de captura (verifica ejecución del script).")
 else:
     st.warning("⚠️ No se encontró el archivo JSON cargado.")
 
