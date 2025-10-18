@@ -19,12 +19,37 @@ def llm_chat(prompt: str, model="gpt-4o-mini", temperature=0.3) -> str:
     )
     return completion.choices[0].message.content.strip()
 
-def parse_json_output(raw: str):
+def parse_json_output(raw_text: str):
+    """
+    Intenta interpretar una salida del modelo como JSON válido.
+    Limpia texto fuera de las llaves, elimina bloques de Markdown y devuelve dict si es posible.
+    """
+    if not raw_text:
+        return None
+
+    text = raw_text.strip()
+
+    # 1️⃣ Elimina bloques de código tipo ```json ... ```
+    text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"```$", "", text).strip()
+
+    # 2️⃣ Busca el primer bloque JSON entre llaves
+    if not text.startswith("{"):
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            text = match.group(0)
+
+    # 3️⃣ Limpia caracteres invisibles (espacios no imprimibles, BOM, etc.)
+    text = text.replace("\u200b", "").replace("\ufeff", "").strip()
+
     try:
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end])
-    except Exception:
-        return {}
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError as e:
+        print(f"Error interpretando JSON: {e}")
+        print("Salida bruta del modelo:\n", text[:1000], "...")
+        return None
 
 # ================== Prompt mejorado ==================
 def build_prompt(texto_relevante: str) -> str:

@@ -115,7 +115,7 @@ def main():
                 document.querySelectorAll('mat-dialog-container, .cdk-overlay-backdrop')
                 .forEach(el => el.remove());
             """)
-        time.sleep(8)
+        time.sleep(1)
 
         # === 6. Desbloquear mapa ===
         driver.execute_script("""
@@ -123,7 +123,7 @@ def main():
             .forEach(p => p.style.display='none');
         """)
         step("Cierres forzados de overlays y catálogos para habilitar clic automático.")
-        time.sleep(3)
+        time.sleep(1)
 
         # === Nuevo paso: forzar movimiento y zoom para activar clics ===
         step("Reactivando mapa (movimiento y zoom-out)...")
@@ -139,7 +139,7 @@ def main():
                 console.log('Error reactivando mapa', e);
             }
         """)
-        time.sleep(2)
+        time.sleep(10)
 
 
         # === 7. Autoclick en el punto ===
@@ -155,7 +155,7 @@ def main():
                 }));
             }
         """)
-        time.sleep(6)
+        time.sleep(7)
 
         # === 8. Buscar popup con código ES ===
         popup = None
@@ -183,7 +183,19 @@ def main():
             time.sleep(1)
 
         if found_html:
-            matches = re.findall(r"\bES\d{4,6}\b", found_html)
+            # Buscar solo los ES dentro del bloque de Red Natura 2000
+            import re
+
+            # 1️⃣ Localizar el bloque correcto del HTML
+            rn_block = re.search(r"Red Natura 2000(.+?)Informaci[oó]n de", found_html, re.DOTALL)
+            if rn_block:
+                rn_html = rn_block.group(1)
+            else:
+                rn_html = found_html  # fallback si no se encuentra
+
+            # 2️⃣ Extraer códigos válidos (solo del bloque RN2000)
+            matches = re.findall(r"\bES\d{4,7}\b", rn_html)
+
             if matches:
                 code = matches[0]
                 step(f"Red Natura detectada: {code}")
