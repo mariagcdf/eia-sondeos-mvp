@@ -11,11 +11,9 @@ from core.extraccion.llm_utils import get_client
 
 client = get_client()
 
-
 # ==============================================================
 # 🔹 CARGA SEGURA DE VARIABLES DE ENTORNO
 # ==============================================================
-
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise EnvironmentError(
@@ -31,7 +29,7 @@ else:
 client = OpenAI(api_key=api_key)
 
 # ==============================================================
-# 🔹 PROMPT PARA PH_CONSUMO
+# 🔹 PROMPTS EXISTENTES
 # ==============================================================
 PROMPT_CONSUMO = """
 Eres un redactor técnico especializado en ingeniería ambiental e hidráulica.
@@ -54,9 +52,6 @@ de un Estudio de Impacto Ambiental.
 4. Usa saltos de línea reales que funcionen en Word.
 """
 
-# ==============================================================
-# 🔹 PROMPT PARA PH_LOCALIZACION
-# ==============================================================
 PROMPT_LOCALIZACION = """
 Eres un redactor técnico ambiental.
 Reescribe el texto del apartado “Localización” de un Estudio de Impacto Ambiental
@@ -70,6 +65,32 @@ para que tenga formato limpio y legible en Word.
 2. Inserta dos saltos de párrafo (\\n\\n) después de cada punto o cambio de idea.
 3. No uses Markdown ni HTML, solo texto plano con buena puntuación.
 4. Asegúrate de que los saltos sean interpretables en Word.
+"""
+
+# ==============================================================
+# 🔹 NUEVO PROMPT: IMPACTO SOBRE LA POBLACIÓN (fase de funcionamiento)
+# ==============================================================
+PROMPT_POBLACION = """
+Eres un redactor técnico ambiental.
+Redacta el apartado “Impacto sobre la población” de la fase de funcionamiento
+de un Estudio de Impacto Ambiental, basándote en el uso del sondeo indicado.
+
+=== DATOS ===
+Uso del sondeo: {uso_sondeo}
+
+=== INSTRUCCIONES ===
+1. Redacta un texto formal, técnico y claro, sin usar Markdown ni HTML. No pongas títulos, comienza directamente con el texto.
+2. Incluye:
+   • Descripción del impacto social.
+   • Tipo de efecto (positivo o negativo, directo, duración, reversibilidad).
+   • Dictamen y valoración final (admisible y compatible, moderado, etc.).
+3. Si el uso es:
+   - Abastecimiento → enfoca en el suministro de agua y bienestar poblacional.
+   - Riego o agrícola → enfoca en eficiencia hídrica y desarrollo agrario.
+   - Industrial → enfoca en empleo y economía local.
+   - Recreativo o deportivo → enfoca en turismo y ocio.
+   - Otro → redacta un texto genérico positivo.
+4. Usa saltos de párrafo dobles (\\n\\n) para formato Word.
 """
 
 # ==============================================================
@@ -115,6 +136,37 @@ def procesar_json():
         texto_final = re.sub(r"\n{3,}", "\n\n", texto_final)
         data["PH_Localizacion"] = texto_final
         print("PH_Localizacion reformateado correctamente.")
+
+    # === NUEVO: impacto_poblacion ===
+
+    # Buscar de forma flexible en todas las claves posibles
+    detalles_de_uso = (
+        data.get("parametros.detalles_de_uso") or
+        data.get("parametros.uso_previsto") or
+        (data.get("parametros", {}).get("detalles_de_uso") if isinstance(data.get("parametros"), dict) else "") or
+        (data.get("parametros", {}).get("uso_previsto") if isinstance(data.get("parametros"), dict) else "") or
+        ""
+    ).strip()
+
+    if detalles_de_uso:
+        print(f"Generando texto de impacto sobre la población (uso: {detalles_de_uso})...")
+
+        # 🔹 Asegúrate de que el prompt use {uso_sondeo}, no {detalles_de_uso}
+        prompt = PROMPT_POBLACION.format(uso_sondeo=detalles_de_uso)
+
+        respuesta = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        texto_final = respuesta.choices[0].message.content.strip()
+        texto_final = re.sub(r"\n{3,}", "\n\n", texto_final).replace("\r", "")
+
+        data["impacto_poblacion"] = texto_final
+        print("impacto_poblacion generado correctamente.")
+    else:
+        print("No se encontró ningún campo de uso en el JSON. Se omite impacto_poblacion.")
+
 
     # === Guardar JSON actualizado ===
     with open(latest_json, "w", encoding="utf-8") as f:

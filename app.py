@@ -195,11 +195,11 @@ if json_path.exists():
         # 🔄 Recargar JSON actualizado tras la ejecución
         data_prev = load_json(json_path)
         update_json_field(json_path, {
-            "catastro_info": data_prev.get("catastro_info", "")
+            "catastro_structured": data_prev.get("catastro_structured", "")
         })
 
         # ✅ Mensaje de confirmación
-        if data_prev.get("catastro_info"):
+        if data_prev.get("catastro_structured"):
             st.success("✅ Información catastral extraída y guardada correctamente.")
         else:
             st.warning("⚠️ No se encontró información catastral (puede que el visor no haya devuelto datos).")
@@ -298,6 +298,40 @@ if json_path.exists():
 else:
     st.warning("⚠️ No se encontró el archivo JSON cargado.")
 
+# ========================
+# 💧 INFORMACIÓN DE AGUAS
+# ========================
+st.markdown("## 💧 Información de aguas (Confederación Hidrográfica del Duero)")
+
+if json_path.exists():
+    st.write(f"📄 Archivo en uso: `{json_path.name}`")
+
+    boton_conf = st.button("💧 Obtener información hidrogeológica automáticamente")
+
+    if boton_conf:
+        with st.spinner("Consultando visor CH Duero y extrayendo información hidrogeológica..."):
+            script_conf_path = find_script("core/export_info_confederacion.py")
+            cmd = [sys.executable, "-u", script_conf_path, str(json_path)]
+            run_script_streaming(
+                cmd,
+                ui_title="💧 Proceso de extracción de información de Confederación",
+                height=300
+            )
+
+        # 🔄 Recargar JSON actualizado tras la ejecución
+        data_prev = load_json(json_path)
+        update_json_field(json_path, {
+            "confederacion_info": data_prev.get("confederacion_info", "")
+        })
+
+        # ✅ Mensaje de confirmación
+        if data_prev.get("confederacion_info"):
+            st.success("✅ Información hidrogeológica extraída y guardada correctamente.")
+        else:
+            st.warning("⚠️ No se encontró información de Confederación (puede que el visor no haya devuelto datos).")
+
+else:
+    st.warning("⚠️ No se encontró el archivo JSON cargado.")
 
 
 # ========================

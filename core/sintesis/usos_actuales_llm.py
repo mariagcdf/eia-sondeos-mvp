@@ -44,6 +44,7 @@ def usos_actuales_llm(json_path: Path):
     loc = data.get("localizacion") or {}
     parcela = loc.get("parcela") or data.get("parcela") or ""
     poligono = loc.get("poligono") or data.get("poligono") or ""
+    usos_actuales=loc.get("catastro_structured") or data.get("catastro_structured") or {} 
 
     # === 2. Generar texto técnico con el modelo ===
     client = get_client()
@@ -51,7 +52,7 @@ def usos_actuales_llm(json_path: Path):
     Redacta un párrafo técnico, sin encabezado ni título, describiendo los usos actuales del terreno 
     en el ámbito del Estudio de Impacto Ambiental. Explica la ocupación actual, los cultivos o 
     coberturas vegetales, las construcciones próximas y el estado general del terreno en 
-    {municipio}, polígono {poligono}, parcela {parcela}. 
+    {municipio}, polígono {poligono}, parcela {parcela} y con los usos actuales siguientes {usos_actuales}. 
 
     Debe tener tono técnico-administrativo, extensión media (6–8 líneas), y estar redactado 
     en español de España. No incluyas ningún título, subtítulo ni negritas al inicio.
