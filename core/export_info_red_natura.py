@@ -20,42 +20,7 @@ def result_inside(code, name):
 def result_outside(): 
     print("RESULT: NO_APLICA", flush=True)
 
-
-# === Funciones auxiliares ===
-def find_map_canvas(driver, wait):
-    """Busca el canvas o contenedor principal del mapa."""
-    selectors = [
-        "#map > div > div.ol-unselectable.ol-layers > div:nth-child(2) > canvas",
-        "div.ol-viewport canvas",
-        "div.ol-viewport"
-    ]
-    for sel in selectors:
-        try:
-            el = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
-            if el.is_displayed():
-                return el
-        except Exception:
-            pass
-    return None
-
-
-def click_canvas_js(driver, canvas, x, y):
-    """Realiza un click JS en las coordenadas absolutas indicadas."""
-    return driver.execute_script("""
-        const el = document.elementFromPoint(arguments[1], arguments[2]);
-        if (el) {
-            el.dispatchEvent(new MouseEvent('click', {
-                bubbles: true, cancelable: true, clientX: arguments[1],
-                clientY: arguments[2], view: window
-            }));
-            return el.className || el.tagName;
-        }
-        return null;
-    """, canvas, x, y)
-
-
 def accept_cookies(driver):
-    """Acepta cookies si aparece el banner."""
     step("Buscando banner de cookies…")
     try:
         btn = WebDriverWait(driver, 8).until(
@@ -68,10 +33,9 @@ def accept_cookies(driver):
         warn("No se encontró banner de cookies, continuando…")
 
 
-# === Programa principal ===
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit("Uso: python export_info_red_natura.py <json_path>")
+        raise SystemExit("Uso: python export_info_red_natura_manual.py <json_path>")
 
     json_path = Path(sys.argv[1]).resolve()
     if not json_path.exists():
@@ -87,7 +51,6 @@ def main():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    #chrome_options.add_argument("--headless=new")  # Desactivar si quieres ver la ejecución
 
     driver = webdriver.Chrome(options=chrome_options)
     wait = WebDriverWait(driver, 60)
@@ -101,170 +64,151 @@ def main():
         accept_cookies(driver)
         step("Visor cargado correctamente.")
 
-        # === 2. Abrir panel coordenadas ===
+        # === 2. Panel de coordenadas ===
         step("Abriendo panel de coordenadas…")
         btn_coord = wait.until(EC.element_to_be_clickable((By.ID, "m-locator-xylocator")))
         driver.execute_script("arguments[0].click();", btn_coord)
         wait.until(EC.presence_of_element_located((By.ID, "m-xylocator-srs")))
         step("Panel de coordenadas abierto.")
 
-        # === 3. Localizar coordenadas ===
         select_srs = Select(driver.find_element(By.ID, "m-xylocator-srs"))
         select_srs.select_by_value("EPSG:25830")
-        x_in = driver.find_element(By.ID, "UTM-X")
-        y_in = driver.find_element(By.ID, "UTM-Y")
-        driver.execute_script("arguments[0].value='';", x_in)
-        driver.execute_script("arguments[0].value='';", y_in)
-        x_in.send_keys(utm_x)
-        y_in.send_keys(utm_y)
-        driver.execute_script("arguments[0].click();", driver.find_element(By.ID, "m-xylocator-loc"))
-        time.sleep(3)
+        driver.find_element(By.ID, "UTM-X").clear()
+        driver.find_element(By.ID, "UTM-Y").clear()
+        driver.find_element(By.ID, "UTM-X").send_keys(utm_x)
+        driver.find_element(By.ID, "UTM-Y").send_keys(utm_y)
+        driver.find_element(By.ID, "m-xylocator-loc").click()
         step("Coordenadas localizadas en el visor.")
+        time.sleep(4)
 
-        # === 4. Abrir catálogo y activar capa ===
+        # === 3. Activar capa Red Natura ===
         step("Abriendo catálogo de capas…")
-        btn_capas = wait.until(EC.element_to_be_clickable((
-            By.XPATH, "//button[contains(., 'Catálogo de capas') or .//i[contains(@class,'fa-layer-group')]]"
-        )))
+        btn_capas = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Catálogo de capas') or .//i[contains(@class,'fa-layer-group')]]")))
         driver.execute_script("arguments[0].click();", btn_capas)
         time.sleep(2)
 
-        step("Buscando capa 'Red Natura 2000' o 'Espacios protegidos (@MITERD)'…")
-        capa_xpath = (
-            "//span[contains(., 'Red Natura 2000') or contains(., 'Espacios protegidos')]"
-            "/ancestor::mat-checkbox//span[contains(@class,'mat-checkbox-inner-container')]"
-        )
-        success = False
-        for attempt in range(3):
-            try:
-                inner = wait.until(EC.presence_of_element_located((By.XPATH, capa_xpath)))
-                checkbox_input = inner.find_element(By.XPATH, ".//preceding-sibling::input")
-                checked = checkbox_input.get_attribute("aria-checked")
-                if checked == "true":
-                    step("La capa ya estaba activada.")
-                    success = True
-                    break
+        capa_xpath = ("//span[contains(., 'Red Natura 2000') or contains(., 'Espacios protegidos')]/ancestor::mat-checkbox//span[contains(@class,'mat-checkbox-inner-container')]")
+        inner = wait.until(EC.presence_of_element_located((By.XPATH, capa_xpath)))
+        ActionChains(driver).move_to_element(inner).pause(0.3).click(inner).perform()
+        step("Capa 'Red Natura 2000 / Espacios protegidos' activada.")
+        time.sleep(2)
 
-                step(f"Activando capa (intento {attempt+1})…")
-                ActionChains(driver).move_to_element(inner).pause(0.3).click(inner).perform()
-                time.sleep(2)
-
-                inner = wait.until(EC.presence_of_element_located((By.XPATH, capa_xpath)))
-                checkbox_input = inner.find_element(By.XPATH, ".//preceding-sibling::input")
-                checked = checkbox_input.get_attribute("aria-checked")
-
-                if checked == "true":
-                    step("✅ Capa activada correctamente.")
-                    success = True
-                    break
-                else:
-                    warn(f"Intento {attempt+1}: el checkbox aún no está activo.")
-
-            except Exception as e:
-                warn(f"Error al intentar activar la capa (intento {attempt+1}): {e}")
-
-        if not success:
-            warn("⚠️ No se logró activar la capa tras varios intentos.")
-
-        # === 5. Refrescar y cerrar catálogo ===
+        # === 4. Refrescar capas ===
         try:
             step("Refrescando capas…")
-            btn_refresh = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//span[contains(., 'Refrescar capas')]/parent::button"
-            )))
+            btn_refresh = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Refrescar capas')]/parent::button")))
             driver.execute_script("arguments[0].click();", btn_refresh)
-            time.sleep(2)
+            time.sleep(3)
+            wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".m-loading")))
+            step("Capas refrescadas correctamente.")
         except Exception as e:
             warn(f"No se pudo refrescar capas: {e}")
 
+        # === 5. Cerrar catálogo ===
         try:
-            step("Cerrando catálogo…")
-            btn_close = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//span[contains(., 'Cerrar')]/parent::button"
-            )))
+            btn_close = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Cerrar')]/parent::button")))
             driver.execute_script("arguments[0].click();", btn_close)
-            time.sleep(1)
             step("Catálogo cerrado.")
-        except Exception as e:
-            warn(f"No se pudo cerrar catálogo: {e}")
-
-        # === 6. Activar herramienta de información ===
-        try:
-            step("Activando herramienta de información…")
-            info_btn = wait.until(EC.element_to_be_clickable((
-                By.CSS_SELECTOR, "button[title='Información'], button[aria-label='Información']"
-            )))
-            driver.execute_script("arguments[0].click();", info_btn)
-            time.sleep(1)
-        except Exception as e:
-            warn(f"No se pudo activar 'Información': {e}")
-
-               # === 7. Hacer clic en el centro del mapa ===
-        try:
-            step("Esperando a que el mapa esté listo…")
-            time.sleep(3)
-
-            # Localizar el viewport principal del mapa
-            step("Buscando el viewport del mapa (OpenLayers)…")
-            viewport = wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.ol-viewport"))
-            )
-
-            # Obtener dimensiones del mapa
-            rect = driver.execute_script("""
-                const el = arguments[0];
-                const r = el.getBoundingClientRect();
-                return {x:r.x, y:r.y, width:r.width, height:r.height};
-            """, viewport)
-            cx = int(rect["width"] / 2)
-            cy = int(rect["height"] / 2)
-            step(f"Viewport encontrado: ancho={rect['width']}, alto={rect['height']} → centro=({cx},{cy})")
-
-            # Dibujar punto visual de depuración
+        except Exception:
+            warn("No se pudo cerrar el catálogo con el botón, cerrando overlays por script.")
             driver.execute_script("""
-                const mark = document.createElement('div');
-                mark.style.position = 'fixed';
-                mark.style.left = (arguments[1] + arguments[3]) + 'px';
-                mark.style.top = (arguments[2] + arguments[4]) + 'px';
-                mark.style.width = '16px';
-                mark.style.height = '16px';
-                mark.style.background = 'red';
-                mark.style.borderRadius = '50%';
-                mark.style.zIndex = 999999;
-                mark.style.opacity = 0.8;
-                document.body.appendChild(mark);
-                setTimeout(()=>mark.remove(), 3000);
-            """, viewport, rect["x"], rect["y"], cx - 8, cy - 8)
+                document.querySelectorAll('mat-dialog-container, .cdk-overlay-backdrop')
+                .forEach(el => el.remove());
+            """)
+        time.sleep(8)
 
-            # Hacer clic en el centro exacto del mapa
-            step("Haciendo clic en el centro del mapa…")
-            actions = ActionChains(driver)
-            actions.move_to_element_with_offset(viewport, cx, cy)
-            actions.click()
-            actions.perform()
-            step("✅ Clic realizado correctamente en el centro del mapa.")
-            time.sleep(4)
+        # === 6. Desbloquear mapa ===
+        driver.execute_script("""
+            document.querySelectorAll('mat-dialog-container, .cdk-overlay-backdrop')
+            .forEach(p => p.style.display='none');
+        """)
+        step("Cierres forzados de overlays y catálogos para habilitar clic automático.")
+        time.sleep(3)
 
-            # Analizar el HTML tras el clic
-            html = driver.page_source
-            match = re.search(r"(ES\d{6,}).*?Nombre\s*</[^>]+>\s*<[^>]*>(.*?)</", html, re.DOTALL)
-            if match:
-                code = match.group(1).strip()
-                name = match.group(2).strip()
+        # === Nuevo paso: forzar movimiento y zoom para activar clics ===
+        step("Reactivando mapa (movimiento y zoom-out)...")
+        driver.execute_script("""
+            try {
+                const map = document.querySelector('div.ol-viewport');
+                const wheelEvent = new WheelEvent('wheel', {deltaY: 100, bubbles: true});
+                map.dispatchEvent(wheelEvent);
+                map.dispatchEvent(new WheelEvent('wheel', {deltaY: -100, bubbles: true}));
+                map.dispatchEvent(new MouseEvent('mousedown', {clientX: 300, clientY: 300, bubbles: true}));
+                map.dispatchEvent(new MouseEvent('mouseup', {clientX: 310, clientY: 310, bubbles: true}));
+            } catch(e) {
+                console.log('Error reactivando mapa', e);
+            }
+        """)
+        time.sleep(2)
+
+
+        # === 7. Autoclick en el punto ===
+        step("Simulando clic automático en las coordenadas localizadas…")
+        driver.execute_script("""
+            const map = document.querySelector('div.ol-viewport');
+            if (map) {
+                const rect = map.getBoundingClientRect();
+                const clickX = rect.width / 2;
+                const clickY = rect.height / 2;
+                map.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true, cancelable: true, clientX: clickX, clientY: clickY
+                }));
+            }
+        """)
+        time.sleep(6)
+
+        # === 8. Buscar popup con código ES ===
+        popup = None
+        selectors = [
+            "div.m-popup",
+            "div.ol-overlaycontainer-stopevent div.m-popup",
+            "div.ol-overlaycontainer-stopevent"
+        ]
+        found_html = ""
+        for _ in range(40):
+            for sel in selectors:
+                try:
+                    popup = driver.find_element(By.CSS_SELECTOR, sel)
+                    if popup.is_displayed():
+                        html = popup.get_attribute("innerHTML")
+                        if "Area:" in html or "Distance:" in html or "display: none" in html:
+                            continue
+                        found_html = html
+                        step(f"Popup detectado con selector: {sel}")
+                        break
+                except Exception:
+                    continue
+            if found_html:
+                break
+            time.sleep(1)
+
+        if found_html:
+            matches = re.findall(r"\bES\d{4,6}\b", found_html)
+            if matches:
+                code = matches[0]
+                step(f"Red Natura detectada: {code}")
                 data["codigos_red_natura"] = [code]
-                data["nombres_red_natura"] = [name]
                 data["estado_red_natura"] = "en_red_natura"
                 data["red_natura"] = True
-                result_inside(code, name)
-                step(f"🟢 Red Natura detectada: {code} - {name}")
+                result_inside(code, "AutoClick")
             else:
-                step("⚠ No se encontró código ES tras el clic, puede que no esté en zona protegida.")
-                result_outside()
+                step("Popup encontrado pero sin código ES visible.")
+                snippet = found_html[:300].replace("\n", " ")
+                warn(f"Fragmento HTML popup: {snippet}")
                 data["estado_red_natura"] = "no_aplica"
                 data["red_natura"] = False
+                result_outside()
+        else:
+            warn("No se detectó ningún popup tras el clic automático.")
+            driver.save_screenshot("debug_no_popup.png")
+            html_snippet = driver.page_source[:1000].replace("\n", " ")
+            warn(f"Guardada captura debug_no_popup.png. Primeros 1000 caracteres del HTML: {html_snippet}")
+            data["estado_red_natura"] = "no_aplica"
+            data["red_natura"] = False
+            result_outside()
 
-        except Exception as e:
-            warn(f"Error al hacer clic en el mapa: {e}")
+    except Exception as e:
+        warn(f"Error inesperado: {e}")
 
     finally:
         json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

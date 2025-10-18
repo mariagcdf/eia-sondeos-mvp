@@ -1,7 +1,13 @@
 import json
 import sys
 from pathlib import Path
-from core.extraccion.llm_utils import call_llm_structured_json
+
+# --- Asegurar que la raíz del proyecto está en sys.path ---
+PROJECT_ROOT = Path(__file__).resolve().parents[2]  # dos niveles arriba desde core/sintesis
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from core.extraccion.llm_utils import call_llm_extract_json
 
 def step(msg: str):
     print(f"MB_STEP: {msg}", flush=True)
@@ -31,8 +37,6 @@ except Exception as e:
 
 municipio = data.get("municipio", "municipio no especificado")
 provincia = data.get("provincia", "")
-uso_suelo = data.get("PH_usos_actuales", "") or data.get("usos_actuales_llm", "")
-geologia = data.get("geologia", "")
 coordenadas = f"UTM X={data.get('utm_x_principal')}, Y={data.get('utm_y_principal')}"
 
 # 3. Construir prompt contextual
@@ -43,9 +47,6 @@ para un sondeo de captación de agua subterránea ubicado en {municipio} ({provi
 
 El área no pertenece a la Red Natura 2000 y se encuentra en entorno rural.
 Utiliza un estilo técnico, conciso y objetivo. Basándote en los datos del proyecto:
-
-- Geología: {geologia[:600]}
-- Usos actuales del suelo: {uso_suelo[:600]}
 
 Devuelve exclusivamente un JSON con este formato:
 {{
@@ -58,7 +59,7 @@ Devuelve exclusivamente un JSON con este formato:
 # 4. Llamada al modelo
 step("Llamando al modelo para redactar 4.3, 4.4 y 4.5...")
 try:
-    res = call_llm_structured_json(prompt, model="gpt-4.1-mini")
+    res = call_llm_extract_json(prompt, model="gpt-4.1-mini")
     medio_biotico = res.get("4.3_Medio_biotico", "").strip()
     medio_perceptual = res.get("4.4_Medio_perceptual", "").strip()
     medio_socioeconomico = res.get("4.5_Medio_socioeconomico", "").strip()

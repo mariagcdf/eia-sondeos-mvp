@@ -184,16 +184,37 @@ if st.button("🔎 Comprobar Red Natura y generar medio biótico si procede"):
         dentro = comprobar_red_natura(json_path)
 
     if dentro:
-        st.success("✅ Dentro de Red Natura 2000.")
+        st.success("✅ Dentro de Red Natura 2000. Generando medio biótico específico…")
+        try:
+            run_script_streaming(
+                [sys.executable, "-u", "core/sintesis/medio_biotico_red_natura.py", str(json_path)],
+                ui_title="🪶 Log medio biótico Red Natura (en vivo)",
+                height=220
+            )
+            # Esperar hasta que el campo se complete
+            for _ in range(5):
+                time.sleep(1)
+                data_actual = load_json(json_path)
+                if data_actual.get("4.3_Medio_biotico"):
+                    break
+            st.success("🪶 Medio biótico/perceptual/socioeconómico (Red Natura) generado.")
+        except Exception as e:
+            st.error(f"Error generando medio biótico (Red Natura): {e}")
+
     else:
-        st.warning("⚠️ Fuera de Red Natura 2000. Generando medio biótico…")
+        st.warning("⚠️ Fuera de Red Natura 2000. Generando medio biótico estándar…")
         try:
             run_script_streaming(
                 [sys.executable, "-u", "core/sintesis/medio_biotico_no_red_natura.py", str(json_path)],
-                ui_title="🪶 Log medio biótico (en vivo)",
+                ui_title="🪶 Log medio biótico (fuera Red Natura)",
                 height=220
             )
-            st.success("🪶 Medio biótico/perceptual/socioeconómico generado.")
+            for _ in range(5):
+                time.sleep(1)
+                data_actual = load_json(json_path)
+                if data_actual.get("4.3_Medio_biotico"):
+                    break
+            st.success("🪶 Medio biótico/perceptual/socioeconómico (fuera Red Natura) generado.")
         except Exception as e:
             st.error(f"Error generando medio biótico: {e}")
 
