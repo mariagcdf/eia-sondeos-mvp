@@ -83,53 +83,6 @@ def _write_with_paragraphs(para: Paragraph, text: str):
         cur.alignment = alignment
         cur.style = style
 
-
-def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
-    """
-    Reemplaza todos los {{placeholders}}:
-    - Si el párrafo contiene SOLO el marcador → reemplaza el contenido completo.
-    - Si hay texto antes o después → reemplazo inline conservando estilo y sangría.
-    - Si el párrafo pertenece al encabezado (header), los reemplazos se convierten a mayúsculas reales.
-    """
-    for para in list(_iter_paragraphs(doc)):
-        text = _clean(_para_text(para))
-        if "{{" not in text:
-            continue
-
-        # 🔹 Detectar si el párrafo pertenece al encabezado del documento
-        in_header = False
-        try:
-            parent = para._element.getparent()
-            while parent is not None:
-                if parent.tag.endswith("hdr"):  # <w:hdr> → sección de encabezado
-                    in_header = True
-                    break
-                parent = parent.getparent()
-        except Exception:
-            pass
-
-        for key, val in (replacements or {}).items():
-            pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
-            replacement_text = str(val or "")
-
-            # 🔹 Si el párrafo solo contiene el marcador
-            if pattern.fullmatch(text.strip()):
-                if in_header:
-                    replacement_text = replacement_text.upper()
-                _write_with_paragraphs(para, replacement_text)
-                break
-
-            # 🔹 Si el marcador está dentro de una línea de texto
-            elif pattern.search(text):
-                for run in para.runs:
-                    if pattern.search(run.text):
-                        new_text = pattern.sub(replacement_text, run.text)
-                        if in_header:
-                            new_text = new_text.upper()  # Forzar mayúsculas solo en encabezado
-                        run.text = new_text
-                break
-
-
 # =====================
 # Iterador de párrafos
 # =====================
@@ -160,33 +113,76 @@ def _iter_paragraphs(doc: Document):
                         yield p
 
 # =====================
-# Reemplazo principal
+# Reemplazo de placeholders
 # =====================
 
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
-    Reemplaza todos los {{placeholders}} en runs de texto sin alterar formato.
-    - Si el párrafo contiene SOLO el marcador → reemplaza el párrafo entero con nuevos saltos.
-    - Si está dentro de una frase o encabezado → reemplazo inline dentro del run.
+    Reemplaza todos los {{placeholders}}, incluso si están divididos por runs o contienen puntos.
+    Mantiene formato y preserva los encabezados exactamente como están.
     """
+
+    def is_in_header(para: Paragraph) -> bool:
+        """Detecta si un párrafo pertenece al encabezado."""
+        try:
+            parent = para._element.getparent()
+            while parent is not None:
+                if parent.tag.endswith("hdr"):
+                    return True
+                parent = parent.getparent()
+        except Exception:
+            pass
+        return False
+
     for para in list(_iter_paragraphs(doc)):
-        text = _clean(_para_text(para))
-        if "{{" not in text:
+        full_text = _clean(_para_text(para))
+        if "{{" not in full_text:
             continue
 
-        for key, val in (replacements or {}).items():
-            pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.DOTALL)
+        in_header = is_in_header(para)
+        replaced_any = False
 
-            # Si el párrafo solo contiene el marcador
-            if pattern.fullmatch(text.strip()):
-                _write_with_paragraphs(para, val)
+        for key, val in (replacements or {}).items():
+            key_pattern = re.escape(key).replace(r"\.", r"[.\s\u00A0\u200B\u00AD]*")
+            pattern = re.compile(r"\{\{\s*" + key_pattern + r"\s*\}\}", re.IGNORECASE)
+            if not pattern.search(full_text):
+                continue
+
+            replacement_text = str(val or "")
+
+            # 🔹 Si el párrafo está en un encabezado, reemplazamos solo texto en runs
+            if in_header:
+                for run in para.runs:
+                    if pattern.search(run.text):
+                        run.text = pattern.sub(replacement_text, run.text)
+                        replaced_any = True
+                continue  # no tocar formato ni crear nuevos runs
+
+            # 🔹 En el cuerpo normal
+            if re.fullmatch(r"^\s*" + pattern.pattern + r"\s*$", full_text):
+                _write_with_paragraphs(para, replacement_text)
+                replaced_any = True
                 break
 
-            # Si el marcador está dentro de una línea de texto (encabezados, frases, etc.)
-            for run in para.runs:
-                if pattern.search(run.text):
-                    run.text = pattern.sub(str(val or ""), run.text)
-            # No se limpian runs ni estilos; se actualiza en sitio
+            new_text = pattern.sub(replacement_text, full_text)
+            if new_text != full_text:
+                replaced_any = True
+                base_run = para.runs[0] if para.runs else None
+                _clear_paragraph_keep_format(para)
+                new_run = para.add_run(new_text)
+                if base_run:
+                    font = base_run.font
+                    new_run.font.name = font.name
+                    new_run.font.size = font.size
+                    new_run.font.bold = font.bold
+                    new_run.font.italic = font.italic
+                    new_run.font.underline = font.underline
+                full_text = new_text
+
+        # 🔹 No forzar mayúsculas en encabezados
+        if replaced_any and not in_header:
+            for r in para.runs:
+                r.text = r.text
 
 
 # =====================
@@ -237,7 +233,7 @@ def export_docx_from_placeholder_map(
     else:
         print("⚠️ No se encontró redactar_placeholder.py — se omite la redacción automática.")
 
-     # 2️⃣ Generar Alternativas automáticamente si faltan
+    # 2️⃣ Generar Alternativas automáticamente si faltan
     try:
         missing = [k for k in ["PH_Alternativas_Desc", "PH_Alternativas_Val", "PH_Alternativas_Just"]
                    if not placeholder_map.get(k)]
@@ -261,13 +257,40 @@ def export_docx_from_placeholder_map(
     except Exception as e:
         print(f"⚠️ Error generando alternativas automáticas: {e}")
 
-
-    # 2️⃣ Procesar documento
+    # 3️⃣ Procesar documento
     doc = Document(plantilla_path)
-    replacements = {str(k): str(v or "") for k, v in (placeholder_map or {}).items()}
+
+    # 🔹 Aplanar diccionario (para permitir claves con puntos)
+    def flatten_dict(d, parent_key='', sep='.'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    flat_data = flatten_dict(placeholder_map)
+    replacements = {str(k): str(v or "") for k, v in flat_data.items()}
+
+    # 🔎 Mostrar claves disponibles (debug)
+    print("\n🔑 Claves disponibles para reemplazo:")
+    for k in sorted(replacements.keys()):
+        print(f" - {k}: {replacements[k]}")
+    print("====================================\n")
 
     _replace_placeholders(doc, replacements)
-    _fill_tables_by_labels(doc, label_values or placeholder_map)
+    _fill_tables_by_labels(doc, label_values or flat_data)
+
+    # Verificar si queda algún {{ sin reemplazar }}
+    unreplaced = [p.text for p in _iter_paragraphs(doc) if "{{" in p.text]
+    if unreplaced:
+        print("⚠️ Placeholders sin reemplazar detectados:")
+        for u in unreplaced:
+            print("  -", u)
+    else:
+        print("✅ Todos los placeholders fueron reemplazados correctamente.")
 
     doc.save(out_path)
     print(f"📄 Documento exportado correctamente: {out_path}")
