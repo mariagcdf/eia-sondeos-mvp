@@ -73,7 +73,7 @@ def enable_catastro_layer(driver):
         )
         driver.execute_script("arguments[0].click();", img)
         step("Capa Catastro activada correctamente.")
-        time.sleep(4)
+        time.sleep(8)
         return True
     except Exception as e:
         warn(f"No se pudo activar capa Catastro automáticamente: {e}")

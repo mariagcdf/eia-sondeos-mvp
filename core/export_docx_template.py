@@ -157,6 +157,22 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
                         run.text = pattern.sub(replacement_text, run.text)
                         replaced_any = True
                 continue  # no tocar formato ni crear nuevos runs
+            
+            #prueba de algo nuevo
+            from docx.shared import Inches
+            from pathlib import Path
+
+            # 🖼️ Si el valor es una ruta a imagen, insertar directamente
+            if isinstance(val, str) and val.lower().endswith((".png", ".jpg", ".jpeg")) and Path(val).exists():
+                # Limpia el párrafo actual
+                _clear_paragraph_keep_format(para)
+                # Inserta la imagen
+                run = para.add_run()
+                run.add_picture(str(val), width=Inches(4.5))
+                replaced_any = True
+                break
+            ###############
+
 
             # 🔹 En el cuerpo normal
             if re.fullmatch(r"^\s*" + pattern.pattern + r"\s*$", full_text):

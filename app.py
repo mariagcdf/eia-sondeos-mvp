@@ -292,9 +292,27 @@ if json_path.exists():
             "captura_usos_actuales": data_prev.get("captura_usos_actuales", "")
         })
 
-        # ✅ Mensaje de confirmación
-        st.success("✅ Captura guardada correctamente.")
+        # ✅ Mostrar el texto y la imagen directamente
+        texto_usos = data_prev.get("usos_actuales_llm", "")
+        ruta_captura = data_prev.get("captura_usos_actuales", "")
 
+        if texto_usos:
+            st.markdown("### 🏞️ Usos actuales del terreno")
+            st.write(texto_usos)
+
+        if ruta_captura and Path(ruta_captura).exists():
+            st.image(str(ruta_captura), caption="Vista del terreno en CH Duero (PNOA)", width=600)
+        else:
+            st.warning("⚠️ No se encontró la imagen de captura.")
+
+
+        # ✅ Mensaje de confirmación
+        if data_prev.get("usos_actuales_llm"):
+            st.success("✅ 'Usos actuales del terreno' generado y guardado correctamente.")
+        if data_prev.get("captura_usos_actuales"):
+            st.success("✅ Captura guardada correctamente.")
+        else:
+            st.warning("⚠️ No se encontró información de 'Usos actuales' (puede que el modelo no haya devuelto datos).")
 else:
     st.warning("⚠️ No se encontró el archivo JSON cargado.")
 

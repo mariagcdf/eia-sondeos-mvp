@@ -263,7 +263,7 @@ def crop_center(in_path: Path, out_path: Path):
     left = int(w * 0.25)
     right = int(w * 0.75)
     top = int(h * 0.10)
-    bottom = int(h * 0.90)
+    bottom = int(h * 0.70)
     img.crop((left, top, right, bottom)).save(out_path)
     img.close()
 
@@ -436,10 +436,17 @@ def main():
         step(f"Imagen guardada: {out_path}")
         done(out_path)
 
-        # === 7. Actualizar JSON ===
-        data["captura_usos_actuales"] = str(out_path)
-        json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        step("JSON actualizado con la ruta de la captura.")
+        # === 7. Actualizar JSON (sin borrar claves previas) ===
+        step("Actualizando JSON con la ruta de la captura (preservando resto de campos)…")
+        try:
+            # Cargar de nuevo para evitar sobrescritura
+            current_data = json.loads(json_path.read_text(encoding="utf-8"))
+            current_data["captura_usos_actuales"] = str(out_path)
+            json_path.write_text(json.dumps(current_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            step("JSON actualizado con la ruta de la captura (preservado 'usos_actuales_llm').")
+        except Exception as e:
+            warn(f"Error actualizando JSON: {e}")
+
 
     except Exception as e:
         warn(f"Error inesperado: {e}")
