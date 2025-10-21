@@ -7,6 +7,7 @@ import regex as re
 import subprocess
 from core.sintesis.alternativas_llm import generar_alternativas_llm
 import json
+from docx.shared import Inches
 
 NBSP = "\u00A0"
 ZWSP = "\u200B"
@@ -119,8 +120,10 @@ def _iter_paragraphs(doc: Document):
 def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
     """
     Reemplaza todos los {{placeholders}}, incluso si están divididos por runs o contienen puntos.
-    Mantiene formato y preserva los encabezados exactamente como están.
+    Mantiene formato y preserva encabezados. Inserta imágenes si el valor es una ruta a archivo .png/.jpg.
     """
+    from docx.shared import Inches
+    from pathlib import Path
 
     def is_in_header(para: Paragraph) -> bool:
         """Detecta si un párrafo pertenece al encabezado."""
@@ -148,6 +151,36 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
             if not pattern.search(full_text):
                 continue
 
+            # 🖼️ Si es imagen, insertar directamente (nuevo método robusto)
+            if isinstance(val, str) and val.lower().endswith((".png", ".jpg", ".jpeg")):
+                img_path = Path(val)
+                if not img_path.is_absolute():
+                    img_path = Path.cwd() / img_path
+
+                if img_path.exists():
+                    print(f"🖼️ Insertando imagen para placeholder {key}: {img_path}")
+                    _clear_paragraph_keep_format(para)
+                    para.text = ""  # vaciamos el texto actual
+
+                    # Insertar la imagen en un nuevo párrafo justo después
+                    new_para = _insert_after(para)
+                    run = new_para.add_run()
+                    try:
+                        # Escalar la imagen a un máximo de 5.5 pulgadas (~14 cm de ancho)
+                        max_width = Inches(5.5)
+                        run.add_picture(str(img_path), width=max_width)
+                        replaced_any = True
+                        break
+                    except Exception as e:
+                        print(f"⚠️ Error insertando imagen {img_path}: {e}")
+                        para.add_run(f"[Error al insertar imagen: {img_path.name}]")
+                        replaced_any = True
+                        break
+                else:
+                    print(f"⚠️ Ruta de imagen no encontrada: {img_path}")
+                    continue
+
+
             replacement_text = str(val or "")
 
             # 🔹 Si el párrafo está en un encabezado, reemplazamos solo texto en runs
@@ -156,30 +189,15 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
                     if pattern.search(run.text):
                         run.text = pattern.sub(replacement_text, run.text)
                         replaced_any = True
-                continue  # no tocar formato ni crear nuevos runs
-            
-            #prueba de algo nuevo
-            from docx.shared import Inches
-            from pathlib import Path
+                continue
 
-            # 🖼️ Si el valor es una ruta a imagen, insertar directamente
-            if isinstance(val, str) and val.lower().endswith((".png", ".jpg", ".jpeg")) and Path(val).exists():
-                # Limpia el párrafo actual
-                _clear_paragraph_keep_format(para)
-                # Inserta la imagen
-                run = para.add_run()
-                run.add_picture(str(val), width=Inches(4.5))
-                replaced_any = True
-                break
-            ###############
-
-
-            # 🔹 En el cuerpo normal
+            # 🔹 Si el placeholder está solo en el párrafo (sin texto adicional)
             if re.fullmatch(r"^\s*" + pattern.pattern + r"\s*$", full_text):
                 _write_with_paragraphs(para, replacement_text)
                 replaced_any = True
                 break
 
+            # 🔹 En línea con texto
             new_text = pattern.sub(replacement_text, full_text)
             if new_text != full_text:
                 replaced_any = True
@@ -195,7 +213,7 @@ def _replace_placeholders(doc: Document, replacements: Dict[str, Any]):
                     new_run.font.underline = font.underline
                 full_text = new_text
 
-        # 🔹 No forzar mayúsculas en encabezados
+        #No forzar mayusculas en el encabezado
         if replaced_any and not in_header:
             for r in para.runs:
                 r.text = r.text
