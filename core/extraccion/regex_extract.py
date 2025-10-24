@@ -9,6 +9,12 @@ def _to_float_safe(s: str) -> Optional[float]:
     except Exception:
         return None
 
+def _to_integer_safe(s: str) -> Optional[int]:
+    try:
+        return int(float(s.replace(",", ".")))
+    except Exception:
+        return None
+
 def _to_float_thousands(s: str) -> Optional[float]:
     """
     Convierte strings con miles+decimales:
@@ -87,19 +93,19 @@ def regex_extract_min_fields(text: str) -> Dict[str, Any]:
         t, re.I
     )
     if m_def:
-        out["parametros"]["diametro_perforacion_definitivo_mm"] = _to_float_safe(m_def.group(1))
+        out["parametros"]["diametro_perforacion_definitivo_mm"] = _to_integer_safe(m_def.group(1))
 
     m_ini = re.search(
         r'di[aá]metro\s+inicial[\s\S]{0,240}?ser[aá]\s+(?:como\s+)?m[ií]nimo\s+de\s+(\d{2,3}(?:[.,]\d+)?)\s*mm',
         t, re.I
     )
     if m_ini:
-        out["parametros"]["diametro_perforacion_inicial_mm"] = _to_float_safe(m_ini.group(1))
+        out["parametros"]["diametro_perforacion_inicial_mm"] = _to_integer_safe(m_ini.group(1))
 
     # Tubería impulsión
     m = re.search(r'tuber[ií]a\s+de\s+impulsi[oó]n[\s\S]{0,100}?(\d+[.,]?\d*)\s*mm', t, re.I)
     if m:
-        out["parametros"]["diametro_tuberia_impulsion_mm"] = _to_float_safe(m.group(1))
+        out["parametros"]["diametro_tuberia_impulsion_mm"] = _to_integer_safe(m.group(1))
 
     # Caudales
     m = re.search(r'caudal[^.\n]{0,80}?(m[aá]x(?:imo)?|instant[aá]neo)[^.\n]{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*l/?s', t, re.I)
