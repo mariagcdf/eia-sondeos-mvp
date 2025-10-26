@@ -27,9 +27,8 @@ from core.sintesis.instalacion_electrica import redactar_instalacion_llm
 env_path = PROJECT_ROOT / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
-st.set_page_config(page_title="EIA (Sondeo nuevo)", page_icon="🧭", layout="centered")
-st.title("🧭 Generador de EIA — Sondeo nuevo")
-st.caption("Flujo: subir PDF → extracción/redacción → Red Natura 2000 → medio biótico → exportar DOCX")
+st.set_page_config(page_title="Evaluación de Impacto Ambiental a partir de proyecto", page_icon="🧭", layout="centered")
+st.title("🧭 Evaluación de Impacto Ambiental a partir de proyecto")
 
 # ========================
 # HELPERS

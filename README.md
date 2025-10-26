@@ -101,6 +101,7 @@ proyecto-eia-automatizado/
 ├─ requirements.txt
 ├─ .env
 └─ README.md
+```
 
 🧰 Instalación y uso
 --------------------
@@ -159,6 +160,6 @@ Una vez iniciado, abre el enlace local que aparece en consola
 ---------------------------------------------------------------
 👩‍💻 Autora
 ---------------------------------------------------------------
-María García-Cruz de Felipe
-Máster en Ingeniería e Innovación – Evolve Academy (2025)
-Colaboración con IPSA Ingenieros y Soluciones Avanzadas S.L.
+- María García-Cruz de Felipe
+- Máster en Data Science e IA– Evolve Academy (2025)
+- Colaboración con IPSA Ingenieros y Soluciones Avanzadas S.L.
